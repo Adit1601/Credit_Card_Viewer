@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-only theme palette. See themes.xml. -->
+    <color name="bg_root">#0D0F14</color>
+    <color name="bg_surface">#161A22</color>
+    <color name="bg_surface_variant">#1E2330</color>
+
+    <color name="text_primary">#E7ECF3</color>
+    <color name="text_secondary">#9AA4B4</color>
+    <color name="text_disabled">#5A6472</color>
+
+    <color name="accent">#6B8AFB</color>
+    <color name="accent_pressed">#4C6BE0</color>
+
+    <color name="danger">#EF5A6F</color>
+    <color name="divider">#242A38</color>
+
+    <!-- Amber warning used for the "Expires soon" tile pill. -->
+    <color name="warning_amber">#F2B84B</color>
+    <color name="warning_amber_bg">#3A2E00</color>
+
+    <!-- Card tile palette exposed in the color picker (§4.2). -->
+    <color name="card_slate">#2A3140</color>
+    <color name="card_navy">#1F3A6B</color>
+    <color name="card_teal">#155E6B</color>
+    <color name="card_forest">#1F5E3A</color>
+    <color name="card_olive">#5E5A1F</color>
+    <color name="card_amber">#8A5A1F</color>
+    <color name="card_rust">#8A3B1F</color>
+    <color name="card_crimson">#7A1F2B</color>
+    <color name="card_plum">#5C1F5E</color>
+    <color name="card_indigo">#2B1F7A</color>
+    <color name="card_graphite">#3A3F4A</color>
+    <color name="card_black">#0F1218</color>
+</resources>

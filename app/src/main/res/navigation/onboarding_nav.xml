@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/onboarding_nav"
+    app:startDestination="@id/welcomeFragment">
+
+    <fragment
+        android:id="@+id/welcomeFragment"
+        android:name="com.cardvault.ui.onboarding.WelcomeFragment"
+        android:label="welcome">
+        <action
+            android:id="@+id/action_welcome_to_set_password"
+            app:destination="@id/setPasswordFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/setPasswordFragment"
+        android:name="com.cardvault.ui.onboarding.SetPasswordFragment"
+        android:label="set_password" />
+</navigation>

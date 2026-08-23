@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/cardTile"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="16dp"
+    android:layout_marginVertical="8dp"
+    app:cardCornerRadius="18dp"
+    app:cardElevation="4dp"
+    app:cardBackgroundColor="@color/card_slate">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="188dp"
+        android:padding="20dp">
+
+        <TextView
+            android:id="@+id/nickname"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="#FFFFFF"
+            android:maxLines="1"
+            android:ellipsize="end"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/networkLogo"
+            android:layout_marginEnd="12dp"
+            tools:text="HDFC Rewards" />
+
+        <ImageView
+            android:id="@+id/networkLogo"
+            android:layout_width="52dp"
+            android:layout_height="32dp"
+            android:scaleType="fitCenter"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:src="@drawable/ic_network_visa" />
+
+        <TextView
+            android:id="@+id/cardNumber"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceHeadlineSmall"
+            android:textColor="#FFFFFF"
+            android:letterSpacing="0.05"
+            android:fontFamily="monospace"
+            android:layout_marginTop="24dp"
+            app:layout_constraintTop_toBottomOf="@id/nickname"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:text="•••• •••• •••• 1234" />
+
+        <TextView
+            android:id="@+id/nameLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="NAME"
+            android:textSize="10sp"
+            android:textColor="#B3FFFFFF"
+            android:layout_marginTop="20dp"
+            app:layout_constraintTop_toBottomOf="@id/cardNumber"
+            app:layout_constraintStart_toStartOf="parent" />
+
+        <TextView
+            android:id="@+id/nameOnCard"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="#FFFFFF"
+            android:maxLines="1"
+            android:ellipsize="end"
+            app:layout_constraintTop_toBottomOf="@id/nameLabel"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/expiryLabel"
+            android:layout_marginEnd="12dp"
+            tools:text="A DE SILVA" />
+
+        <TextView
+            android:id="@+id/expiryLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="EXPIRY"
+            android:textSize="10sp"
+            android:textColor="#B3FFFFFF"
+            app:layout_constraintTop_toTopOf="@id/nameLabel"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <TextView
+            android:id="@+id/expiry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="#FFFFFF"
+            android:fontFamily="monospace"
+            app:layout_constraintTop_toBottomOf="@id/expiryLabel"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:text="12/28" />
+
+        <TextView
+            android:id="@+id/cardTypeBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_pill_neutral"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="2dp"
+            android:textColor="#FFFFFF"
+            android:textSize="10sp"
+            android:layout_marginTop="10dp"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/nameOnCard"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:text="Credit"
+            tools:visibility="visible" />
+
+        <TextView
+            android:id="@+id/expiringSoonBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_pill_warning"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="2dp"
+            android:text="@string/tile_expiring_soon"
+            android:textColor="@color/warning_amber"
+            android:textSize="10sp"
+            android:layout_marginTop="10dp"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/expiry"
+            app:layout_constraintEnd_toEndOf="parent"
+            tools:visibility="visible" />
+
+        <ImageView
+            android:id="@+id/dragHandle"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_drag_handle"
+            android:alpha="0.85"
+            android:padding="4dp"
+            android:contentDescription="@string/cd_drag_handle"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</com.google.android.material.card.MaterialCardView>

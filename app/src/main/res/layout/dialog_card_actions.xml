@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingVertical="12dp"
+    android:background="@color/bg_surface"
+    tools:ignore="HardcodedText">
+
+    <TextView
+        android:id="@+id/sheetTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="24dp"
+        android:paddingBottom="8dp"
+        android:textAppearance="?attr/textAppearanceTitleMedium"
+        android:textColor="@color/text_primary" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/actionReorder"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="start|center_vertical"
+        android:paddingHorizontal="24dp"
+        android:text="@string/home_action_reorder"
+        app:icon="@drawable/ic_drag_handle"
+        app:iconGravity="start"
+        app:iconPadding="16dp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/actionEdit"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="start|center_vertical"
+        android:paddingHorizontal="24dp"
+        android:text="@string/home_action_edit"
+        app:icon="@drawable/ic_edit"
+        app:iconGravity="start"
+        app:iconPadding="16dp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/actionDelete"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="start|center_vertical"
+        android:paddingHorizontal="24dp"
+        android:text="@string/home_action_delete"
+        android:textColor="@color/danger"
+        app:icon="@drawable/ic_delete"
+        app:iconTint="@color/danger"
+        app:iconGravity="start"
+        app:iconPadding="16dp" />
+</LinearLayout>

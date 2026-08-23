@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_root">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_root"
+        app:elevation="0dp">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:navigationIcon="@drawable/ic_back"
+            app:navigationContentDescription="@string/action_cancel" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior"
+        android:clipToPadding="false"
+        android:paddingBottom="120dp">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="8dp">
+
+            <include
+                android:id="@+id/detailPreview"
+                layout="@layout/item_card_tile" />
+
+            <!-- Nickname -->
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/detail_label_nickname" />
+                    <TextView android:id="@+id/rowNickname" style="@style/DetailValue" />
+                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/copyNickname"
+                    style="@style/DetailCopyButton"
+                    android:contentDescription="@string/detail_copy"
+                    android:src="@drawable/ic_copy" />
+            </LinearLayout>
+
+            <!-- Name on card -->
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/detail_label_name" />
+                    <TextView android:id="@+id/rowName" style="@style/DetailValue" />
+                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/copyName"
+                    style="@style/DetailCopyButton"
+                    android:contentDescription="@string/detail_copy"
+                    android:src="@drawable/ic_copy" />
+            </LinearLayout>
+
+            <!-- Card number -->
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/detail_label_number" />
+                    <TextView android:id="@+id/rowNumber" style="@style/DetailValue"
+                        android:fontFamily="monospace" />
+                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/toggleNumber"
+                    style="@style/DetailCopyButton"
+                    android:contentDescription="@string/detail_reveal_number"
+                    android:src="@drawable/ic_visibility" />
+                <ImageButton
+                    android:id="@+id/copyNumber"
+                    style="@style/DetailCopyButton"
+                    android:contentDescription="@string/detail_copy_number"
+                    android:src="@drawable/ic_copy" />
+            </LinearLayout>
+
+            <!-- Expiry -->
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/detail_label_expiry" />
+                    <TextView android:id="@+id/rowExpiry" style="@style/DetailValue"
+                        android:fontFamily="monospace" />
+                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/copyExpiry"
+                    style="@style/DetailCopyButton"
+                    android:contentDescription="@string/detail_copy"
+                    android:src="@drawable/ic_copy" />
+            </LinearLayout>
+
+            <!-- CVV -->
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/detail_label_cvv" />
+                    <TextView android:id="@+id/rowCvv" style="@style/DetailValue"
+                        android:fontFamily="monospace"
+                        android:text="@string/detail_cvv_hidden" />
+                </LinearLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/showCvvButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/detail_show_cvv" />
+                <ImageButton
+                    android:id="@+id/copyCvv"
+                    style="@style/DetailCopyButton"
+                    android:contentDescription="@string/detail_copy_cvv"
+                    android:src="@drawable/ic_copy" />
+            </LinearLayout>
+
+            <!-- Network -->
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/detail_label_network" />
+                    <TextView android:id="@+id/rowNetwork" style="@style/DetailValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/editButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="24dp"
+                android:text="@string/detail_edit"
+                app:icon="@drawable/ic_edit" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/deleteButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="8dp"
+                android:text="@string/detail_delete"
+                android:textColor="@color/danger"
+                app:strokeColor="@color/danger"
+                app:icon="@drawable/ic_delete"
+                app:iconTint="@color/danger" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

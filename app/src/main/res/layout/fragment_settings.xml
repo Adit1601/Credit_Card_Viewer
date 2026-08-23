@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_root">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_root"
+        app:elevation="0dp">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:navigationIcon="@drawable/ic_back"
+            app:navigationContentDescription="@string/action_cancel"
+            app:title="@string/settings_title" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior"
+        android:clipToPadding="false"
+        android:paddingBottom="32dp">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:id="@+id/rowChangePassword"
+                style="@style/DetailRow"
+                android:clickable="true"
+                android:focusable="true">
+
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView
+                        style="@style/DetailValue"
+                        android:text="@string/settings_change_password"
+                        android:paddingTop="0dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View style="@style/SettingsDivider" />
+
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView
+                        style="@style/DetailValue"
+                        android:text="@string/settings_lock_on_background"
+                        android:paddingTop="0dp" />
+                </LinearLayout>
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchLockOnBg"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/settings_lock_on_background" />
+            </LinearLayout>
+
+            <View style="@style/SettingsDivider" />
+
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="12dp">
+
+                <TextView
+                    style="@style/DetailLabel"
+                    android:text="@string/settings_cvv_reauth_mode" />
+
+                <RadioGroup
+                    android:id="@+id/cvvReauthGroup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="8dp">
+
+                    <com.google.android.material.radiobutton.MaterialRadioButton
+                        android:id="@+id/cvvReauthPerAction"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_cvv_reauth_per_action" />
+
+                    <com.google.android.material.radiobutton.MaterialRadioButton
+                        android:id="@+id/cvvReauthPerSession"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_cvv_reauth_per_session" />
+                </RadioGroup>
+            </LinearLayout>
+
+            <View style="@style/SettingsDivider" />
+
+            <LinearLayout
+                android:id="@+id/rowResetApp"
+                style="@style/DetailRow"
+                android:clickable="true"
+                android:focusable="true">
+
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView
+                        style="@style/DetailValue"
+                        android:text="@string/settings_reset_app"
+                        android:textColor="@color/danger"
+                        android:paddingTop="0dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View style="@style/SettingsDivider" />
+
+            <LinearLayout style="@style/DetailRow">
+                <LinearLayout style="@style/DetailValueGroup">
+                    <TextView style="@style/DetailLabel" android:text="@string/settings_version" />
+                    <TextView
+                        android:id="@+id/versionText"
+                        style="@style/DetailValue"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <ProgressBar
+        android:id="@+id/blockingProgress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone" />
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
