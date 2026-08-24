@@ -14,6 +14,7 @@ import com.cardvault.security.SessionManager
 import com.cardvault.util.CardFormatting
 import com.cardvault.util.ExpiryUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -36,9 +37,16 @@ class CardViewModel(app: Application) : AndroidViewModel(app) {
      *   - the reorder path (uses adapter.currentIds() which is fed by [cards], so we
      *     disable reorder when a search query is active — see HomeFragment).
      */
+    // Cancel the in-flight decrypt when a fresh Room emission arrives. Otherwise a slow
+    // coroutine started for list A can complete AFTER a coroutine started for list B and
+    // overwrite `value` with stale data — any subsequent filter/search then runs on the
+    // wrong list until Room next emits.
+    private var decryptJob: Job? = null
+
     val allCards: LiveData<List<CardDisplay>> = MediatorLiveData<List<CardDisplay>>().apply {
         addSource(repo.observeCards()) { entities ->
-            viewModelScope.launch {
+            decryptJob?.cancel()
+            decryptJob = viewModelScope.launch {
                 val display = withContext(Dispatchers.Default) { entities.map { it.toDisplay() } }
                 value = display
             }

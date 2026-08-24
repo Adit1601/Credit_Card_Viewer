@@ -63,65 +63,69 @@ class AddEditCardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun save(form: FormInput, editingCardId: String?, detectedNetwork: CardNetwork) {
         viewModelScope.launch {
-            val key = SessionManager.getMasterKey() ?: run {
-                fatalError.value = "Vault is locked"; return@launch
-            }
-            // encrypt/write can fail if the user backgrounds the app mid-save with
-            // lock-on-background ON: SessionManager.lock() removes the Keystore alias, and
-            // Cipher.init on the still-held SecretKey handle throws. Without this catch, the
-            // exception would kill the launched coroutine, savedEvent never fires, and the
-            // fragment sits with its Save button disabled forever.
-            val outcome: SaveOutcome = withContext(Dispatchers.Default) {
-                runCatching {
-                    val encPan = CryptoManager.encrypt(form.cardNumberDigits, key)
-                    val encExp = CryptoManager.encrypt(form.expiryDigits, key)
-                    val encCvv = CryptoManager.encrypt(form.cvvDigits, key)
+            // Guarded by SessionManager.withWriteLock: serialises against password rotation so
+            // getMasterKey() and the subsequent DB write cannot straddle a rotation and produce
+            // ciphertext with the doomed old key.
+            val outcome: SaveOutcome = SessionManager.withWriteLock {
+                val key = SessionManager.getMasterKey()
+                    ?: return@withWriteLock SaveOutcome.Locked
+                // encrypt/write can fail if the user backgrounds the app mid-save with
+                // lock-on-background ON: SessionManager.lock() removes the Keystore alias, and
+                // Cipher.init on the still-held SecretKey handle throws. Without this catch, the
+                // exception would kill the launched coroutine, savedEvent never fires, and the
+                // fragment sits with its Save button disabled forever.
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        val encPan = CryptoManager.encrypt(form.cardNumberDigits, key)
+                        val encExp = CryptoManager.encrypt(form.expiryDigits, key)
+                        val encCvv = CryptoManager.encrypt(form.cvvDigits, key)
 
-                    if (editingCardId == null) {
-                        val nextOrder = repo.nextSortOrder()
-                        repo.insert(
-                            CardEntity(
-                                nickname = form.nickname.trim(),
-                                nameOnCard = form.nameOnCard.trim(),
-                                encryptedCardNumber = encPan,
-                                encryptedExpiry = encExp,
-                                encryptedCvv = encCvv,
-                                colorHex = form.colorHex,
-                                cardNetwork = detectedNetwork,
-                                cardType = form.cardType,
-                                issuingBank = form.issuingBank.trim(),
-                                sortOrder = nextOrder,
-                                createdAt = System.currentTimeMillis()
+                        if (editingCardId == null) {
+                            val nextOrder = repo.nextSortOrder()
+                            repo.insert(
+                                CardEntity(
+                                    nickname = form.nickname.trim(),
+                                    nameOnCard = form.nameOnCard.trim(),
+                                    encryptedCardNumber = encPan,
+                                    encryptedExpiry = encExp,
+                                    encryptedCvv = encCvv,
+                                    colorHex = form.colorHex,
+                                    cardNetwork = detectedNetwork,
+                                    cardType = form.cardType,
+                                    issuingBank = form.issuingBank.trim(),
+                                    sortOrder = nextOrder,
+                                    createdAt = System.currentTimeMillis()
+                                )
                             )
-                        )
-                        SaveOutcome.Saved
-                    } else {
-                        // Update path: the row we're editing may have been deleted from another
-                        // path since load. Signal that back to the caller instead of silently
-                        // dropping the edit and letting the fragment pop as if the save succeeded.
-                        val existing = repo.getById(editingCardId)
-                            ?: return@runCatching SaveOutcome.NotFound
-                        repo.update(
-                            existing.copy(
-                                nickname = form.nickname.trim(),
-                                nameOnCard = form.nameOnCard.trim(),
-                                encryptedCardNumber = encPan,
-                                encryptedExpiry = encExp,
-                                encryptedCvv = encCvv,
-                                colorHex = form.colorHex,
-                                cardNetwork = detectedNetwork,
-                                cardType = form.cardType,
-                                issuingBank = form.issuingBank.trim()
+                            SaveOutcome.Saved
+                        } else {
+                            // Update path: the row we're editing may have been deleted from another
+                            // path since load. Signal that back to the caller instead of silently
+                            // dropping the edit and letting the fragment pop as if the save succeeded.
+                            val existing = repo.getById(editingCardId)
+                                ?: return@runCatching SaveOutcome.NotFound
+                            repo.update(
+                                existing.copy(
+                                    nickname = form.nickname.trim(),
+                                    nameOnCard = form.nameOnCard.trim(),
+                                    encryptedCardNumber = encPan,
+                                    encryptedExpiry = encExp,
+                                    encryptedCvv = encCvv,
+                                    colorHex = form.colorHex,
+                                    cardNetwork = detectedNetwork,
+                                    cardType = form.cardType,
+                                    issuingBank = form.issuingBank.trim()
+                                )
                             )
-                        )
-                        SaveOutcome.Saved
+                            SaveOutcome.Saved
+                        }
+                    }.getOrElse {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        // Re-check the master key: if it's gone, the vault locked mid-save. That's
+                        // a distinct terminal state from a generic encrypt failure.
+                        if (SessionManager.getMasterKey() == null) SaveOutcome.Locked
+                        else SaveOutcome.EncryptFailed
                     }
-                }.getOrElse {
-                    if (it is kotlinx.coroutines.CancellationException) throw it
-                    // Re-check the master key: if it's gone, the vault locked mid-save. That's
-                    // a distinct terminal state from a generic encrypt failure.
-                    if (SessionManager.getMasterKey() == null) SaveOutcome.Locked
-                    else SaveOutcome.EncryptFailed
                 }
             }
             when (outcome) {

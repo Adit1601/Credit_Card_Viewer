@@ -1,6 +1,8 @@
 package com.cardvault.security
 
 import com.cardvault.crypto.CryptoManager
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.crypto.SecretKey
 
 /**
@@ -51,4 +53,17 @@ object SessionManager {
     fun markNeedsReauth() {
         needsReauth = true
     }
+
+    private val writeLock = Mutex()
+
+    /**
+     * Serialise encrypt-then-persist operations against a password rotation. Change-password
+     * takes this lock around the DB rewrap transaction plus the Keystore install and
+     * [setMasterKey]; any encrypter that would otherwise fetch [getMasterKey] and land in
+     * the post-commit / pre-setMasterKey gap queues instead and picks up the new key.
+     *
+     * Read paths (list/detail decryption) do NOT take this lock — a decrypt that races
+     * rotation returns empty for the affected row and self-heals on the next Room emission.
+     */
+    suspend fun <T> withWriteLock(block: suspend () -> T): T = writeLock.withLock { block() }
 }

@@ -34,10 +34,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
      * write commits or none do, so a mid-run process kill can never leave the DB and the
      * salt/canary describing different keys.
      *
-     * Keystore alias + in-memory SessionManager are updated after the transaction commits.
-     * They are non-durable state (the alias is re-installed on every unlock from the
-     * persisted salt), so a crash between commit and those two calls self-heals on next
-     * unlock.
+     * The transaction, the Keystore install, and the in-memory [SessionManager.setMasterKey]
+     * all run under [SessionManager.withWriteLock], so a concurrent encrypter (e.g.
+     * AddEditCardViewModel.save) cannot fetch getMasterKey() during the post-commit window
+     * and persist ciphertext with the doomed old key. Encrypters queue on the same mutex
+     * and pick up the new key when they finally run.
+     *
+     * Keystore alias + SessionManager state are non-durable — the alias is re-installed on
+     * every unlock from the persisted salt — so a crash between commit and the Keystore
+     * install still self-heals on next unlock.
      */
     fun changePassword(current: CharArray, new: CharArray) {
         viewModelScope.launch {
@@ -79,25 +84,35 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         // fit inside one Room transaction.
         val newCanary = CryptoManager.createCanary(newRawKey)
 
-        val cards = repo.getAll()
-        val rewrapped = cards.map { row ->
-            val pan = CryptoManager.decrypt(row.encryptedCardNumber, oldKey)
-            val exp = CryptoManager.decrypt(row.encryptedExpiry, oldKey)
-            val cvv = CryptoManager.decrypt(row.encryptedCvv, oldKey)
-            row.copy(
-                encryptedCardNumber = CryptoManager.encrypt(pan, newRawKey),
-                encryptedExpiry = CryptoManager.encrypt(exp, newRawKey),
-                encryptedCvv = CryptoManager.encrypt(cvv, newRawKey)
-            )
-        }
+        // Guarded: transaction + Keystore install + setMasterKey run under one write lock so
+        // no encrypter can observe an inconsistent (DB, SessionManager) pair. See
+        // SessionManager.withWriteLock KDoc. The password-verify + key-derivation above stays
+        // outside — it does no DB writes and holds no shared state.
+        SessionManager.withWriteLock {
+            // Snapshot + rewrap + write all inside one transaction. Reading `cards` outside the
+            // transaction would let a concurrent Add/Edit slip a row past the snapshot — that
+            // row would keep its old-key ciphertext while the salt/canary rotated, and the old
+            // key is destroyed once we exit, permanently locking the row. Room serialises
+            // writes via its transaction executor, so concurrent inserts block until we commit.
+            db.withTransaction {
+                val cards = repo.getAll()
+                val rewrapped = cards.map { row ->
+                    val pan = CryptoManager.decrypt(row.encryptedCardNumber, oldKey)
+                    val exp = CryptoManager.decrypt(row.encryptedExpiry, oldKey)
+                    val cvv = CryptoManager.decrypt(row.encryptedCvv, oldKey)
+                    row.copy(
+                        encryptedCardNumber = CryptoManager.encrypt(pan, newRawKey),
+                        encryptedExpiry = CryptoManager.encrypt(exp, newRawKey),
+                        encryptedCvv = CryptoManager.encrypt(cvv, newRawKey)
+                    )
+                }
+                cardDao.updateAll(rewrapped)
+                metadata.putSaltAndCanary(CryptoManager.base64Encode(newSalt), newCanary)
+            }
 
-        db.withTransaction {
-            cardDao.updateAll(rewrapped)
-            metadata.putSaltAndCanary(CryptoManager.base64Encode(newSalt), newCanary)
+            val newKeystoreKey = CryptoManager.installMasterKey(newRawKey)
+            SessionManager.setMasterKey(newKeystoreKey)
         }
-
-        val newKeystoreKey = CryptoManager.installMasterKey(newRawKey)
-        SessionManager.setMasterKey(newKeystoreKey)
 
         return ChangePasswordOutcome.Success
     }

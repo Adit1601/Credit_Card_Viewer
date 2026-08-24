@@ -25,13 +25,20 @@ class VaultMetadataRepository(
     suspend fun getCanary(): String? = readOrSeed(KEY_CANARY)
 
     /**
-     * Write both keys. Callers should invoke this inside a `db.withTransaction { ... }` block
-     * (composed with other writes — e.g. rotating card ciphertext) so the whole password swap
-     * is one atomic step.
+     * Write both keys atomically. The internal `db.withTransaction` guarantees the salt and
+     * canary rotate as one — a mid-way process kill can never leave them describing
+     * different keys, which would permanently break unlock.
+     *
+     * Callers rotating card ciphertext alongside these values should still wrap the whole
+     * operation in their own `db.withTransaction { ... }` so the ciphertext + salt + canary
+     * commit together. Room composes nested transactions via SQLite savepoints, so this
+     * inner transaction slots into an outer one without conflict.
      */
     suspend fun putSaltAndCanary(saltB64: String, canaryB64: String) {
-        dao.put(MetadataEntry(KEY_SALT, saltB64))
-        dao.put(MetadataEntry(KEY_CANARY, canaryB64))
+        db.withTransaction {
+            dao.put(MetadataEntry(KEY_SALT, saltB64))
+            dao.put(MetadataEntry(KEY_CANARY, canaryB64))
+        }
     }
 
     private suspend fun readOrSeed(key: String): String? {
