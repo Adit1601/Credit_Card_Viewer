@@ -10,9 +10,14 @@ import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.lifecycleScope
 import com.cardvault.R
 import com.cardvault.crypto.CryptoManager
+import com.cardvault.data.db.AppDatabase
 import com.cardvault.data.prefs.SecurePreferences
+import com.cardvault.data.repository.VaultMetadataRepository
+import com.cardvault.util.clearCharsSecurely
+import com.cardvault.util.readCharsSecurely
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,12 +50,18 @@ class AppPasswordDialogFragment : DialogFragment() {
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 layout.error = null
-                val pw = input.text?.toString().orEmpty()
-                if (pw.isEmpty()) {
+                val pwChars = input.readCharsSecurely()
+                if (pwChars.isEmpty()) {
                     layout.error = getString(R.string.error_required); return@setOnClickListener
                 }
+                input.clearCharsSecurely()
                 lifecycleScope.launch {
-                    val ok = withContext(Dispatchers.Default) { verify(pw) }
+                    val ok = try {
+                        withContext(Dispatchers.Default) { verify(pwChars) }
+                    } catch (t: Throwable) {
+                        if (t is CancellationException) throw t
+                        false
+                    }
                     if (ok) {
                         deliver(true)
                         dismiss()
@@ -63,13 +74,19 @@ class AppPasswordDialogFragment : DialogFragment() {
         return dialog
     }
 
-    private fun verify(password: String): Boolean {
-        val prefs = SecurePreferences(requireContext())
-        val saltB64 = prefs.getSalt() ?: return false
-        val canary = prefs.getCanary() ?: return false
-        val salt = CryptoManager.base64Decode(saltB64)
-        val derived = CryptoManager.deriveKey(password.toCharArray(), salt)
-        return CryptoManager.verifyCanary(derived, canary)
+    private suspend fun verify(password: CharArray): Boolean {
+        try {
+            val ctx = requireContext().applicationContext
+            val db = AppDatabase.get(ctx)
+            val metadata = VaultMetadataRepository(db, db.metadataDao(), SecurePreferences(ctx))
+            val saltB64 = metadata.getSalt() ?: return false
+            val canary = metadata.getCanary() ?: return false
+            val salt = CryptoManager.base64Decode(saltB64)
+            val derived = CryptoManager.deriveKey(password, salt)
+            return CryptoManager.verifyCanary(derived, canary)
+        } finally {
+            password.fill(' ')
+        }
     }
 
     private fun deliver(success: Boolean) {

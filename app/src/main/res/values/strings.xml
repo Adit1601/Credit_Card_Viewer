@@ -49,6 +49,9 @@
     <string name="home_search_hint">Search by nickname or last 4 digits</string>
     <string name="home_search_no_matches">No cards match your search.</string>
     <string name="home_reorder_blocked_by_search">Clear search first to reorder</string>
+    <string name="home_reorder_blocked_by_filter">Clear the bank filter first to reorder</string>
+    <string name="home_filter_all">All</string>
+    <string name="home_filter_unknown">Unknown</string>
     <string name="cd_drag_handle">Drag to reorder</string>
     <string name="cd_network_logo">Card network</string>
 
@@ -69,6 +72,7 @@
     <string name="hint_cvv">CVV</string>
     <string name="label_card_color">Card color</string>
     <string name="label_card_type">Card type (optional)</string>
+    <string name="hint_issuing_bank">Issuing bank (optional)</string>
     <string name="action_save">Save</string>
     <string name="error_required">Required</string>
     <string name="error_card_number_length">Card number must be 13–19 digits</string>

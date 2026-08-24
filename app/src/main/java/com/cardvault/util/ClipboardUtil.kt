@@ -1,10 +1,13 @@
 package com.cardvault.util
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PersistableBundle
 import android.view.HapticFeedbackConstants
 import android.view.View
 import com.cardvault.R
@@ -31,7 +34,17 @@ object ClipboardUtil {
 
     fun copySensitive(context: Context, text: String, snackbarAnchor: View) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText(LABEL, text))
+        val clip = ClipData.newPlainText(LABEL, text)
+        // Android 13+ shows a system toast previewing the copied value. EXTRA_IS_SENSITIVE
+        // tells the OS to obscure that preview so a PAN/CVV isn't briefly visible to anyone
+        // looking at the screen. Constant is a compile-time string literal, safe to reference
+        // pre-33 as long as we only set it when the API supports it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        cm.setPrimaryClip(clip)
         snackbarAnchor.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
         Snackbar.make(snackbarAnchor, R.string.clipboard_will_clear, Snackbar.LENGTH_SHORT).show()
 

@@ -5,12 +5,14 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -23,8 +25,11 @@ import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
@@ -46,6 +51,8 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
     private lateinit var expiryInput: TextInputEditText
     private lateinit var cvvLayout: TextInputLayout
     private lateinit var cvvInput: TextInputEditText
+    private lateinit var bankLayout: TextInputLayout
+    private lateinit var bankInput: MaterialAutoCompleteTextView
     private lateinit var colorPicker: RecyclerView
     private lateinit var cardTypeGroup: MaterialButtonToggleGroup
     private lateinit var saveButton: MaterialButton
@@ -81,6 +88,7 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         wireWatchers()
         wireColorPicker()
         wireCardTypePicker()
+        wireBankSuggestions()
         wireSave()
 
         viewModel.initial.observe(viewLifecycleOwner) { editable ->
@@ -89,6 +97,18 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         viewModel.savedEvent.observe(viewLifecycleOwner) { evt ->
             if (evt != null) {
                 viewModel.savedEvent.value = null
+                findNavController().popBackStack()
+            }
+        }
+        // The ViewModel raises fatalError when the vault has locked mid-flight or the
+        // edited row was deleted. Without this observer the save button stays disabled
+        // forever and the user sees no feedback. Re-enable the button, tell the user,
+        // and drop out of the form for the terminal cases.
+        viewModel.fatalError.observe(viewLifecycleOwner) { msg ->
+            if (msg != null) {
+                viewModel.fatalError.value = null
+                saveButton.isEnabled = true
+                Snackbar.make(requireView(), msg, Snackbar.LENGTH_LONG).show()
                 findNavController().popBackStack()
             }
         }
@@ -108,6 +128,8 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         expiryInput = v.findViewById(R.id.expiryInput)
         cvvLayout = v.findViewById(R.id.cvvLayout)
         cvvInput = v.findViewById(R.id.cvvInput)
+        bankLayout = v.findViewById(R.id.bankLayout)
+        bankInput = v.findViewById(R.id.bankInput)
         colorPicker = v.findViewById(R.id.colorPicker)
         cardTypeGroup = v.findViewById(R.id.cardTypeGroup)
         saveButton = v.findViewById(R.id.saveButton)
@@ -174,6 +196,30 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
             if (suppressWatchers) return@doAfterChanged
             dirty = true
         }
+        bankInput.doAfterChanged {
+            if (suppressWatchers) return@doAfterChanged
+            dirty = true
+        }
+    }
+
+    private fun wireBankSuggestions() {
+        // Seed with the static list immediately so the dropdown is populated on first focus;
+        // then fold in banks the user has already entered in other cards.
+        bankInput.setAdapter(
+            ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, BankSuggestions.combined(emptyList()))
+        )
+        viewLifecycleOwner.lifecycleScope.launch {
+            val userBanks = runCatching { viewModel.distinctBanks() }.getOrDefault(emptyList())
+            if (userBanks.isNotEmpty() && isAdded) {
+                bankInput.setAdapter(
+                    ArrayAdapter(
+                        requireContext(),
+                        android.R.layout.simple_list_item_1,
+                        BankSuggestions.combined(userBanks)
+                    )
+                )
+            }
+        }
     }
 
     private fun wireColorPicker() {
@@ -221,6 +267,9 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         panInput.setText(CardFormatting.formatPanForDisplay(e.cardNumberDigits))
         expiryInput.setText(CardFormatting.formatExpiry(e.expiryDigits))
         cvvInput.setText(e.cvvDigits)
+        // Second arg `filter=false` — otherwise setText triggers the dropdown filter and pops
+        // the suggestion list right after opening the edit screen.
+        bankInput.setText(e.issuingBank, false)
         selectedColor = e.colorHex
         paletteAdapter.setSelected(e.colorHex)
         detectedNetwork = CardNetworkDetector.detect(e.cardNumberDigits)
@@ -246,6 +295,7 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         val panDigits = panInput.text?.toString().orEmpty().filter(Char::isDigit)
         val expiryDigits = expiryInput.text?.toString().orEmpty().filter(Char::isDigit)
         val cvvDigits = cvvInput.text?.toString().orEmpty().filter(Char::isDigit)
+        val issuingBank = bankInput.text?.toString().orEmpty().trim()
 
         var ok = true
         if (nickname.isEmpty()) { nicknameLayout.error = getString(R.string.error_required); ok = false }
@@ -265,7 +315,8 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
                 expiryDigits = expiryDigits,
                 cvvDigits = cvvDigits,
                 colorHex = selectedColor,
-                cardType = selectedCardType
+                cardType = selectedCardType,
+                issuingBank = issuingBank
             ),
             editingCardId = editingCardId,
             detectedNetwork = detectedNetwork
@@ -311,8 +362,8 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         .getOrDefault(requireContext().getColor(R.color.card_slate))
 }
 
-/** TextInputEditText helper — lambda gets called after every text change with the current value. */
-private inline fun TextInputEditText.doAfterChanged(crossinline block: (String) -> Unit) {
+/** EditText helper — lambda gets called after every text change with the current value. */
+private inline fun android.widget.EditText.doAfterChanged(crossinline block: (String) -> Unit) {
     addTextChangedListener(object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit

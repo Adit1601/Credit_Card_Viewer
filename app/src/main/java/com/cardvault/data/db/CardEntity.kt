@@ -21,6 +21,7 @@ data class CardEntity(
     val colorHex: String,
     val cardNetwork: CardNetwork,
     val cardType: CardType = CardType.UNKNOWN,
+    val issuingBank: String = "",
     val sortOrder: Int,
     val createdAt: Long
 )

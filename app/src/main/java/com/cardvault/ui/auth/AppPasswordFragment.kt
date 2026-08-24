@@ -12,11 +12,15 @@ import com.cardvault.R
 import com.cardvault.crypto.CryptoManager
 import com.cardvault.data.db.AppDatabase
 import com.cardvault.data.prefs.SecurePreferences
+import com.cardvault.data.repository.VaultMetadataRepository
 import com.cardvault.security.SessionManager
 import com.cardvault.ui.onboarding.OnboardingActivity
+import com.cardvault.util.clearCharsSecurely
+import com.cardvault.util.readCharsSecurely
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -30,11 +34,13 @@ import kotlinx.coroutines.withContext
  */
 class AppPasswordFragment : Fragment(R.layout.fragment_app_password) {
 
-    private lateinit var prefs: SecurePreferences
+    private lateinit var metadata: VaultMetadataRepository
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        prefs = SecurePreferences(requireContext())
+        val ctx = requireContext().applicationContext
+        val db = AppDatabase.get(ctx)
+        metadata = VaultMetadataRepository(db, db.metadataDao(), SecurePreferences(ctx))
 
         val passwordLayout = view.findViewById<TextInputLayout>(R.id.passwordLayout)
         val passwordInput = view.findViewById<TextInputEditText>(R.id.passwordInput)
@@ -44,17 +50,24 @@ class AppPasswordFragment : Fragment(R.layout.fragment_app_password) {
 
         unlockButton.setOnClickListener {
             passwordLayout.error = null
-            val pw = passwordInput.text?.toString().orEmpty()
-            if (pw.isEmpty()) {
+            // Pull chars straight from the widget — no intermediate String on the heap.
+            val pwChars = passwordInput.readCharsSecurely()
+            if (pwChars.isEmpty()) {
                 passwordLayout.error = getString(R.string.error_required)
                 return@setOnClickListener
             }
+            passwordInput.clearCharsSecurely()
             unlockButton.isEnabled = false
             progress.visibility = View.VISIBLE
 
             viewLifecycleOwner.lifecycleScope.launch {
-                val ok = runCatching { withContext(Dispatchers.Default) { tryUnlock(pw) } }
-                    .getOrDefault(false)
+                // tryUnlock() owns pwChars and zeros it in its finally.
+                val ok = try {
+                    withContext(Dispatchers.Default) { tryUnlock(pwChars) }
+                } catch (t: Throwable) {
+                    if (t is CancellationException) throw t
+                    false
+                }
                 progress.visibility = View.GONE
                 unlockButton.isEnabled = true
                 if (ok) {
@@ -68,19 +81,23 @@ class AppPasswordFragment : Fragment(R.layout.fragment_app_password) {
         forgotButton.setOnClickListener { showForgotDialog() }
     }
 
-    private fun tryUnlock(password: String): Boolean {
-        val saltB64 = prefs.getSalt() ?: return false
-        val canary = prefs.getCanary() ?: return false
-        val salt = CryptoManager.base64Decode(saltB64)
+    private suspend fun tryUnlock(password: CharArray): Boolean {
+        try {
+            val saltB64 = metadata.getSalt() ?: return false
+            val canary = metadata.getCanary() ?: return false
+            val salt = CryptoManager.base64Decode(saltB64)
 
-        val derived = CryptoManager.deriveKey(password.toCharArray(), salt)
-        // Verify BEFORE installing anything in Keystore, so wrong-password attempts are cheap.
-        val inMemoryOk = CryptoManager.verifyCanary(derived, canary)
-        if (!inMemoryOk) return false
+            val derived = CryptoManager.deriveKey(password, salt)
+            // Verify BEFORE installing anything in Keystore, so wrong-password attempts are cheap.
+            val inMemoryOk = CryptoManager.verifyCanary(derived, canary)
+            if (!inMemoryOk) return false
 
-        val keystoreKey = CryptoManager.installMasterKey(derived)
-        SessionManager.setMasterKey(keystoreKey)
-        return true
+            val keystoreKey = CryptoManager.installMasterKey(derived)
+            SessionManager.setMasterKey(keystoreKey)
+            return true
+        } finally {
+            password.fill(' ')
+        }
     }
 
     private fun showForgotDialog() {

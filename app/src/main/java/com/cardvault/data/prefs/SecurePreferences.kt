@@ -8,10 +8,15 @@ import androidx.security.crypto.MasterKey
 /**
  * Small typed wrapper around EncryptedSharedPreferences. Holds:
  *  - onboarding_done flag
- *  - password salt (Base64)
- *  - password-verification canary (Base64, iv||ciphertext of a known plaintext)
  *  - lock_on_background toggle
  *  - cvv_reauth_mode toggle (PER_SESSION | PER_ACTION)
+ *
+ * Salt + password-verification canary used to live here but were moved into the Room
+ * `metadata` table (schema v4) so a password change can commit card ciphertext AND the
+ * salt/canary rotation atomically in one Room transaction. The [readSaltForSeed] /
+ * [readCanaryForSeed] / [clearSeededSecrets] accessors below are the one-shot upgrade
+ * path used by VaultMetadataRepository to migrate v3 installs — nothing else should
+ * touch them.
  *
  * Everything here is small and secret-adjacent; the store itself is AES-256 wrapped by a
  * MasterKey backed by Android Keystore.
@@ -23,11 +28,21 @@ class SecurePreferences(context: Context) {
     fun isOnboardingDone(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
     fun setOnboardingDone(value: Boolean) = prefs.edit().putBoolean(KEY_ONBOARDING_DONE, value).apply()
 
-    fun getSalt(): String? = prefs.getString(KEY_SALT, null)
-    fun setSalt(base64: String) = prefs.edit().putString(KEY_SALT, base64).apply()
+    /** v3 → v4 seed only. Callers outside the metadata repo should use `VaultMetadataRepository`. */
+    internal fun readSaltForSeed(): String? = prefs.getString(KEY_SALT, null)
 
-    fun getCanary(): String? = prefs.getString(KEY_CANARY, null)
-    fun setCanary(base64: String) = prefs.edit().putString(KEY_CANARY, base64).apply()
+    /** v3 → v4 seed only. Callers outside the metadata repo should use `VaultMetadataRepository`. */
+    internal fun readCanaryForSeed(): String? = prefs.getString(KEY_CANARY, null)
+
+    /**
+     * v3 → v4 seed only. Runs synchronously (`commit()`) so the wipe is durable before the
+     * seeder returns — a crash between the DB insert and this call leaves the two stores
+     * temporarily double-holding the values, which is fine (the DB is authoritative and the
+     * next read will re-seed idempotently or, after this returns, skip prefs entirely).
+     */
+    internal fun clearSeededSecrets() {
+        prefs.edit().remove(KEY_SALT).remove(KEY_CANARY).commit()
+    }
 
     fun getLockOnBackground(): Boolean = prefs.getBoolean(KEY_LOCK_ON_BG, true)
     fun setLockOnBackground(value: Boolean) = prefs.edit().putBoolean(KEY_LOCK_ON_BG, value).apply()

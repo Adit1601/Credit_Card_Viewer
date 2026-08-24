@@ -14,6 +14,8 @@ import com.cardvault.R
 import com.cardvault.data.prefs.CvvReauthMode
 import com.cardvault.data.prefs.SecurePreferences
 import com.cardvault.ui.onboarding.OnboardingActivity
+import com.cardvault.util.clearCharsSecurely
+import com.cardvault.util.readCharsSecurely
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.snackbar.Snackbar
@@ -101,21 +103,32 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 newLayout.error = null
                 newConfirmLayout.error = null
 
-                val current = currentInput.text?.toString().orEmpty()
-                val newPw = newInput.text?.toString().orEmpty()
-                val newConfirm = newConfirmInput.text?.toString().orEmpty()
+                val currentChars = currentInput.readCharsSecurely()
+                val newChars = newInput.readCharsSecurely()
+                val newConfirmChars = newConfirmInput.readCharsSecurely()
 
-                if (current.isEmpty()) {
-                    currentLayout.error = getString(R.string.error_required); return@setOnClickListener
+                fun zeroAll() {
+                    currentChars.fill(' '); newChars.fill(' '); newConfirmChars.fill(' ')
                 }
-                if (newPw.length < 4) {
-                    newLayout.error = getString(R.string.error_password_min_length); return@setOnClickListener
+
+                if (currentChars.isEmpty()) {
+                    zeroAll(); currentLayout.error = getString(R.string.error_required); return@setOnClickListener
                 }
-                if (newPw != newConfirm) {
-                    newConfirmLayout.error = getString(R.string.error_password_mismatch); return@setOnClickListener
+                if (newChars.size < 4) {
+                    zeroAll(); newLayout.error = getString(R.string.error_password_min_length); return@setOnClickListener
                 }
+                if (!newChars.contentEquals(newConfirmChars)) {
+                    zeroAll(); newConfirmLayout.error = getString(R.string.error_password_mismatch); return@setOnClickListener
+                }
+                // Confirm's job is done — zero it and clear all widgets before handing off.
+                newConfirmChars.fill(' ')
+                currentInput.clearCharsSecurely()
+                newInput.clearCharsSecurely()
+                newConfirmInput.clearCharsSecurely()
+
                 dialog.dismiss()
-                viewModel.changePassword(current, newPw)
+                // VM takes ownership of currentChars + newChars and zeros both in its finally.
+                viewModel.changePassword(currentChars, newChars)
             }
         }
         dialog.show()

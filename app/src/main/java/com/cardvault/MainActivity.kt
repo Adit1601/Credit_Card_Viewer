@@ -54,6 +54,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // onCreate already called finish() when routing to onboarding or lock. Android still
+        // runs onStart → onResume on the way out, so without this guard we would start
+        // BiometricLockActivity a second time and stack two lock screens on top of each other.
+        if (isFinishing) return
         // If we lost the key while backgrounded (either because the policy is ON, or because
         // the OS killed the process), route back through the lock screen.
         if (prefs.isOnboardingDone() && !SessionManager.isUnlocked()) {

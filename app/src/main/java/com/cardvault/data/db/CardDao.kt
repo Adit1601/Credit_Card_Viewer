@@ -24,6 +24,9 @@ interface CardDao {
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM cards")
     suspend fun maxSortOrder(): Int
 
+    @Query("SELECT DISTINCT issuingBank FROM cards WHERE issuingBank != '' ORDER BY issuingBank COLLATE NOCASE ASC")
+    suspend fun distinctIssuingBanks(): List<String>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(card: CardEntity)
 

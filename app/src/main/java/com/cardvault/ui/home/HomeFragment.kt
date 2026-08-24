@@ -16,6 +16,8 @@ import com.cardvault.R
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
 import com.google.android.material.snackbar.Snackbar
 
 class HomeFragment : Fragment(R.layout.fragment_home) {
@@ -26,6 +28,8 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
     private lateinit var recycler: RecyclerView
     private lateinit var emptyState: View
     private lateinit var noMatches: View
+    private lateinit var bankFilterScroll: View
+    private lateinit var bankFilterChips: ChipGroup
     private lateinit var adapter: CardTileAdapter
 
     private var itemTouchHelper: ItemTouchHelper? = null
@@ -38,6 +42,8 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         recycler = view.findViewById(R.id.cardList)
         emptyState = view.findViewById(R.id.emptyState)
         noMatches = view.findViewById(R.id.noMatches)
+        bankFilterScroll = view.findViewById(R.id.bankFilterScroll)
+        bankFilterChips = view.findViewById(R.id.bankFilterChips)
         setupRecycler()
         setupToolbar()
 
@@ -47,10 +53,68 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         viewModel.cards.observe(viewLifecycleOwner) { list ->
             adapter.submitList(list)
             val total = viewModel.allCards.value.orEmpty().size
-            val filtering = viewModel.searchQuery.value.orEmpty().isNotBlank()
+            val filtering = viewModel.searchQuery.value.orEmpty().isNotBlank() ||
+                viewModel.bankFilter.value != null
             emptyState.visibility = if (total == 0) View.VISIBLE else View.GONE
             noMatches.visibility = if (total > 0 && filtering && list.isEmpty()) View.VISIBLE else View.GONE
         }
+        viewModel.bankFilterOptions.observe(viewLifecycleOwner) { opts ->
+            rebuildBankChips(opts)
+        }
+    }
+
+    /**
+     * Rebuilds the chip row from the current option set. Preserves the active filter across
+     * rebuilds (a card save that introduces a new bank triggers this) by re-checking whichever
+     * chip matches [CardViewModel.bankFilter]; if the filter refers to a bank no longer present
+     * (last card of that bank was deleted or edited to another bank), the selection falls back
+     * to "All" and the ViewModel state is updated to match.
+     */
+    private fun rebuildBankChips(opts: BankFilterOptions) {
+        val currentFilter = viewModel.bankFilter.value
+        bankFilterChips.setOnCheckedStateChangeListener(null)
+        bankFilterChips.removeAllViews()
+
+        val allChip = makeFilterChip(getString(R.string.home_filter_all))
+        bankFilterChips.addView(allChip)
+
+        val bankChips = opts.banks.map { bank ->
+            val c = makeFilterChip(bank)
+            c.tag = bank
+            bankFilterChips.addView(c)
+            bank to c
+        }.toMap()
+
+        val unknownChip = if (opts.hasUnknown) {
+            val c = makeFilterChip(getString(R.string.home_filter_unknown))
+            c.tag = "" // sentinel for the "Unknown" bucket
+            bankFilterChips.addView(c)
+            c
+        } else null
+
+        // Re-select whichever chip matches the current filter, or fall back to All.
+        val target: Chip = when {
+            currentFilter == null -> allChip
+            currentFilter.isEmpty() -> unknownChip ?: allChip.also { viewModel.bankFilter.value = null }
+            else -> bankChips[bankChips.keys.firstOrNull { it.equals(currentFilter, ignoreCase = true) }]
+                ?: allChip.also { viewModel.bankFilter.value = null }
+        }
+        target.isChecked = true
+
+        bankFilterChips.setOnCheckedStateChangeListener { group, checkedIds ->
+            val chip = checkedIds.firstOrNull()?.let { group.findViewById<Chip>(it) } ?: return@setOnCheckedStateChangeListener
+            viewModel.bankFilter.value = when {
+                chip === allChip -> null
+                else -> chip.tag as? String ?: null
+            }
+        }
+    }
+
+    private fun makeFilterChip(label: String): Chip {
+        val chip = Chip(requireContext())
+        chip.text = label
+        chip.isCheckable = true
+        return chip
     }
 
     private fun setupRecycler() {
@@ -174,9 +238,15 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
 
     private fun enterReorderMode() {
         // Reorder mutates the persisted sort order, so it only makes sense on the full
-        // list. If the user has a live filter, block entry.
+        // list. If the user has a live filter, block entry — otherwise applySortOrders
+        // only rewrites indices for the filtered subset and collides with the untouched
+        // sortOrder values on the hidden rows.
         if (viewModel.searchQuery.value.orEmpty().isNotBlank()) {
             Snackbar.make(requireView(), R.string.home_reorder_blocked_by_search, Snackbar.LENGTH_SHORT).show()
+            return
+        }
+        if (viewModel.bankFilter.value != null) {
+            Snackbar.make(requireView(), R.string.home_reorder_blocked_by_filter, Snackbar.LENGTH_SHORT).show()
             return
         }
         reorderMode = true
@@ -185,6 +255,7 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         toolbar.menu.findItem(R.id.action_search).isVisible = false
         toolbar.menu.findItem(R.id.action_done_reorder).isVisible = true
         toolbar.navigationIcon = null
+        bankFilterScroll.visibility = View.GONE
     }
 
     private fun exitReorderMode() {
@@ -194,6 +265,7 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
         toolbar.menu.findItem(R.id.action_search).isVisible = true
         toolbar.menu.findItem(R.id.action_done_reorder).isVisible = false
         toolbar.setNavigationIcon(R.drawable.ic_add)
+        bankFilterScroll.visibility = View.VISIBLE
     }
 
     companion object {

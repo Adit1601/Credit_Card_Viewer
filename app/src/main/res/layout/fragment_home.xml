@@ -22,6 +22,25 @@
             app:title="@string/home_title"
             app:titleCentered="false"
             android:background="@color/bg_root" />
+
+        <HorizontalScrollView
+            android:id="@+id/bankFilterScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:paddingHorizontal="8dp"
+            android:clipToPadding="false"
+            app:layout_scrollFlags="scroll|enterAlways">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/bankFilterChips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:singleSelection="true"
+                app:selectionRequired="true"
+                app:singleLine="true"
+                app:chipSpacingHorizontal="8dp" />
+        </HorizontalScrollView>
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.recyclerview.widget.RecyclerView

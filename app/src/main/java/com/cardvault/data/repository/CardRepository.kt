@@ -16,6 +16,7 @@ class CardRepository(private val dao: CardDao) {
     suspend fun getAll(): List<CardEntity> = dao.getAllCards()
     suspend fun getById(id: String): CardEntity? = dao.getCardById(id)
     suspend fun nextSortOrder(): Int = dao.maxSortOrder() + 1
+    suspend fun distinctIssuingBanks(): List<String> = dao.distinctIssuingBanks()
 
     suspend fun insert(card: CardEntity) = dao.insert(card)
     suspend fun update(card: CardEntity) = dao.update(card)

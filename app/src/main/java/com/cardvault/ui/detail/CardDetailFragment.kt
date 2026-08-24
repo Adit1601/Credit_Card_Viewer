@@ -22,6 +22,7 @@ import com.cardvault.util.ClipboardUtil
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.snackbar.Snackbar
 
 /**
  * Card Detail screen (§6). Renders decrypted fields, gates CVV behind the app-password
@@ -101,6 +102,16 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
                 findNavController().popBackStack()
             }
         }
+        // Load can fail three ways: row missing, vault locked, decrypt failed. All three
+        // are terminal for this screen — surface the message and get out, rather than
+        // leaving the fragment mounted with lateinit fields never populated.
+        viewModel.error.observe(viewLifecycleOwner) { msg ->
+            if (msg != null) {
+                viewModel.error.value = null
+                Snackbar.make(requireView(), msg, Snackbar.LENGTH_LONG).show()
+                findNavController().popBackStack()
+            }
+        }
 
         viewModel.load(cardId!!)
     }
@@ -109,6 +120,16 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
         super.onPause()
         // §6.3 — CVV hides when the user leaves the screen or backgrounds the app.
         rowCvv.text = getString(R.string.detail_cvv_hidden)
+        // Same policy for the revealed PAN. Otherwise a brief background→foreground with
+        // lock-on-background=false would return the user to a screen that still shows the
+        // full card number.
+        if (isNumberRevealed) {
+            isNumberRevealed = false
+            val digits = viewModel.state.value?.cardNumberDigits
+            rowNumber.text = if (digits != null) CardFormatting.maskPan(digits) else ""
+            toggleNumber.setImageResource(R.drawable.ic_visibility)
+            toggleNumber.contentDescription = getString(R.string.detail_reveal_number)
+        }
     }
 
     private fun bindViews(v: View) {

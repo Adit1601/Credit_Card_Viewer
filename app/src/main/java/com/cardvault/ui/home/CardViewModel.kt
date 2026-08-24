@@ -48,18 +48,44 @@ class CardViewModel(app: Application) : AndroidViewModel(app) {
     val searchQuery = MutableLiveData("")
 
     /**
-     * Filtered list for the RecyclerView. Recomputes on either source change; filter is
+     * Bank filter state, driven by the chip row on Home:
+     *   - null → All cards
+     *   - ""   → cards with no bank set (the "Unknown" chip)
+     *   - any other → cards whose issuingBank matches (case-insensitive)
+     */
+    val bankFilter = MutableLiveData<String?>(null)
+
+    /** Chip-row source of truth: distinct banks present + whether any card has no bank. */
+    val bankFilterOptions: LiveData<BankFilterOptions> = MediatorLiveData<BankFilterOptions>().apply {
+        addSource(allCards) { list ->
+            val banks = list.orEmpty()
+                .map { it.issuingBank }
+                .filter { it.isNotEmpty() }
+                .distinctBy { it.lowercase() }
+                .sortedBy { it.lowercase() }
+            val hasUnknown = list.orEmpty().any { it.issuingBank.isEmpty() }
+            value = BankFilterOptions(banks = banks, hasUnknown = hasUnknown)
+        }
+    }
+
+    /**
+     * Filtered list for the RecyclerView. Recomputes on any source change; text filter is
      * case-insensitive on the plaintext nickname and on the plaintext last-4 already present
-     * at the tail of [CardDisplay.maskedNumber] (no extra decryption pass).
+     * at the tail of [CardDisplay.maskedNumber] (no extra decryption pass). Bank filter is a
+     * plain equality check on the plaintext `issuingBank`.
      */
     val cards: LiveData<List<CardDisplay>> = MediatorLiveData<List<CardDisplay>>().apply {
         val recompute = {
             val list = allCards.value.orEmpty()
             val q = searchQuery.value.orEmpty().trim()
-            value = if (q.isEmpty()) list else list.filter { it.matches(q) }
+            val bank = bankFilter.value
+            value = list
+                .let { l -> if (q.isEmpty()) l else l.filter { it.matches(q) } }
+                .let { l -> if (bank == null) l else l.filter { it.matchesBank(bank) } }
         }
         addSource(allCards) { recompute() }
         addSource(searchQuery) { recompute() }
+        addSource(bankFilter) { recompute() }
     }
 
     private fun CardDisplay.matches(q: String): Boolean {
@@ -67,6 +93,10 @@ class CardViewModel(app: Application) : AndroidViewModel(app) {
         val last4 = maskedNumber.takeLast(4)
         return last4.all(Char::isDigit) && last4.contains(q)
     }
+
+    private fun CardDisplay.matchesBank(filter: String): Boolean =
+        if (filter.isEmpty()) issuingBank.isEmpty()
+        else issuingBank.equals(filter, ignoreCase = true)
 
     fun applyReorder(orderedIds: List<String>) {
         viewModelScope.launch(Dispatchers.IO) { repo.applyOrder(orderedIds) }
@@ -91,7 +121,13 @@ class CardViewModel(app: Application) : AndroidViewModel(app) {
             colorHex = colorHex,
             network = cardNetwork,
             cardType = cardType,
+            issuingBank = issuingBank,
             isExpiringSoon = ExpiryUtil.isExpiringSoon(exp)
         )
     }
 }
+
+data class BankFilterOptions(
+    val banks: List<String>,
+    val hasUnknown: Boolean
+)

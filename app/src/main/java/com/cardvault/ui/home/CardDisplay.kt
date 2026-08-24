@@ -16,5 +16,6 @@ data class CardDisplay(
     val colorHex: String,
     val network: CardNetwork,
     val cardType: CardType,
+    val issuingBank: String,
     val isExpiringSoon: Boolean
 )
