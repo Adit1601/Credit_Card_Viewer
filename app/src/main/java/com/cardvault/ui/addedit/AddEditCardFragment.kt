@@ -29,6 +29,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -209,7 +210,9 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
             ArrayAdapter(requireContext(), android.R.layout.simple_list_item_1, BankSuggestions.combined(emptyList()))
         )
         viewLifecycleOwner.lifecycleScope.launch {
-            val userBanks = runCatching { viewModel.distinctBanks() }.getOrDefault(emptyList())
+            val userBanks = runCatching { viewModel.distinctBanks() }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrDefault(emptyList())
             if (userBanks.isNotEmpty() && isAdded) {
                 bankInput.setAdapter(
                     ArrayAdapter(

@@ -48,10 +48,16 @@ class AppPasswordDialogFragment : DialogFragment() {
             .create()
 
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setOnClickListener {
+                // Disable immediately so a rapid second tap can't launch a second PBKDF2
+                // derivation in parallel and deliver() the result twice. Re-enabled on any
+                // failure path so the user can retry.
+                positive.isEnabled = false
                 layout.error = null
                 val pwChars = input.readCharsSecurely()
                 if (pwChars.isEmpty()) {
+                    positive.isEnabled = true
                     layout.error = getString(R.string.error_required); return@setOnClickListener
                 }
                 input.clearCharsSecurely()
@@ -66,6 +72,7 @@ class AppPasswordDialogFragment : DialogFragment() {
                         deliver(true)
                         dismiss()
                     } else {
+                        positive.isEnabled = true
                         layout.error = getString(R.string.error_wrong_password)
                     }
                 }
