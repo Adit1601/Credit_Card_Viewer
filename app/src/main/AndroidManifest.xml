@@ -5,6 +5,39 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 
+    <!--
+      Scanning only. The camera frame is analysed in-process by the bundled ML Kit model and
+      never written to disk or handed to another app, and the two stripped permissions below
+      mean it has no route off the device either.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!--
+      required="false" on purpose: the vault's whole point is manual entry, and scanning is an
+      accelerator on top of it. A device with no camera must still be able to install and use
+      the app, so CardScanFragment checks FEATURE_CAMERA_ANY at runtime and falls through to
+      the manual form instead of assuming the hardware is there.
+    -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!--
+      ML Kit drags in com.google.android.datatransport (Google's "CCT" telemetry uploader) via
+      com.google.mlkit:common, and that library's manifest contributes INTERNET and
+      ACCESS_NETWORK_STATE. This app is an offline vault: holding zero network permissions is a
+      property we can point at, not an implementation detail, so both are stripped here.
+
+      Removing the permission rather than excluding the dependency is deliberate. ML Kit's own
+      classes reference TransportFactory/Transport/Transformer/Encoding directly, so excluding the
+      datatransport group would risk NoClassDefFoundError on the OCR path. This way the telemetry
+      code is still present and linkable — it simply has no network capability to use.
+
+      If a future dependency legitimately needs the network, delete the matching line rather than
+      working around it, and revisit the offline claim in the README.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+
     <application
         android:name=".CardVaultApplication"
         android:allowBackup="false"

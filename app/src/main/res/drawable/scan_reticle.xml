@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The framing guide drawn over the live preview. Deliberately just an outline with no fill: the
+  user needs to see the whole card inside it, and a scrim would fight the low-light case that
+  card scanning already struggles with.
+
+  Sized by the layout to the ISO/IEC 7810 ID-1 aspect ratio (85.60 x 53.98 mm ~ 1.586:1), so
+  "fill the frame" and "hold the card square" are the same instruction.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="12dp" />
+    <stroke android:width="2dp" android:color="@color/accent" />
+    <solid android:color="@android:color/transparent" />
+</shape>

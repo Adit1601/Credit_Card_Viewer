@@ -17,6 +17,9 @@
         <action
             android:id="@+id/action_home_to_settings"
             app:destination="@id/settingsFragment" />
+        <action
+            android:id="@+id/action_home_to_scan"
+            app:destination="@id/cardScanFragment" />
     </fragment>
 
     <fragment
@@ -28,6 +31,9 @@
             app:argType="string"
             app:nullable="true"
             android:defaultValue="@null" />
+        <action
+            android:id="@+id/action_add_to_scan"
+            app:destination="@id/cardScanFragment" />
     </fragment>
 
     <fragment
@@ -40,6 +46,28 @@
         <action
             android:id="@+id/action_detail_to_edit"
             app:destination="@id/addEditCardFragment" />
+    </fragment>
+
+    <!--
+      The scanner is a transient step, never a place the user should land on with Back. Both
+      routes out of it (a successful scan, or "enter manually") pop it off the stack, so the
+      Back button from the add form returns to wherever the scan was started from.
+    -->
+    <fragment
+        android:id="@+id/cardScanFragment"
+        android:name="com.cardvault.ui.scan.CardScanFragment"
+        android:label="scan">
+        <!--
+          popUpTo the scanner *inclusive* so pressing Back on the add form does not drop the
+          user back into a live camera they have already finished with. Only used when the scan
+          was started from Home; if it was started from the add form, CardScanFragment pops
+          instead of navigating, so the half-filled form the user came from is preserved.
+        -->
+        <action
+            android:id="@+id/action_scan_to_add"
+            app:destination="@id/addEditCardFragment"
+            app:popUpTo="@id/cardScanFragment"
+            app:popUpToInclusive="true" />
     </fragment>
 
     <fragment

@@ -203,7 +203,32 @@ class HomeFragment : Fragment(R.layout.fragment_home) {
             Snackbar.make(requireView(), R.string.home_limit_reached, Snackbar.LENGTH_SHORT).show()
             return
         }
-        findNavController().navigate(R.id.action_home_to_add)
+        showAddChoiceSheet()
+    }
+
+    /**
+     * Scan-or-type chooser.
+     *
+     * Shown *after* the MAX_CARDS gate on purpose: offering to scan a card that cannot be stored
+     * would spend a camera warm-up and the user's time on a dead end.
+     *
+     * A sheet rather than making one path the default, because neither is always right — scanning
+     * wins on a physical card in hand, typing wins for a virtual card whose number lives in an
+     * email. Both routes reach the same form.
+     */
+    private fun showAddChoiceSheet() {
+        val sheet = BottomSheetDialog(requireContext())
+        val content = layoutInflater.inflate(R.layout.dialog_add_card_choice, null)
+        content.findViewById<View>(R.id.actionScan).setOnClickListener {
+            sheet.dismiss()
+            findNavController().navigate(R.id.action_home_to_scan)
+        }
+        content.findViewById<View>(R.id.actionManual).setOnClickListener {
+            sheet.dismiss()
+            findNavController().navigate(R.id.action_home_to_add)
+        }
+        sheet.setContentView(content)
+        sheet.show()
     }
 
     private fun showActionsSheet(display: CardDisplay) {

@@ -60,6 +60,8 @@ If either step fails or is cancelled, the app closes itself.
 ### 3.3 Adding a card
 
 - Tap the **+** button in the top-left of the toolbar on the main screen.
+- Choose **Scan card** to fill the form from the physical card with the camera (see §3.3.1), or
+  **Enter manually** to type it in.
 - Fill in:
   - **Nickname** — e.g. "HDFC Rewards Platinum".
   - **Name on card**
@@ -71,6 +73,36 @@ If either step fails or is cancelled, the app closes itself.
 - Tap **Save**. Card number, expiry and CVV are encrypted before being written to the local database.
 
 You can store **up to 30 cards**.
+
+#### 3.3.1 Scanning a card
+
+Hold the front of the card inside the on-screen frame. A checklist shows what has been read so
+far: **Number**, **Expiry**, **Name**, **Bank**. Each field only ticks after three separate frames
+agree on the same value, so a single bad read is outvoted rather than accepted. The scan finishes
+on its own once the number and expiry are both locked, and drops you into the Add Card form with
+those fields filled in.
+
+The camera icon inside the **Card number** field on the Add/Edit form does the same thing, and
+keeps anything you have already typed in the fields the scan could not read.
+
+Practical notes:
+
+- **The CVV is never scanned.** You always type it yourself — the cursor is placed there for you.
+  This is deliberate; see §4.10.
+- A **torch button** appears if the camera has a flash, and the hint text tells you when the light
+  is too low to read the card.
+- If a scan gets something wrong, the confirmation Snackbar has an **Undo** that puts the form back
+  exactly as it was.
+- If the number fails its checksum, an amber warning appears under the field. It is a warning, not
+  a block — you can still save.
+- Scanning gives up after about 25 seconds and offers to try again, or to use whatever it did
+  manage to read. **Enter manually** is on screen the whole time, in every state, including when
+  the camera cannot be opened at all.
+
+What happens to the camera frames: nothing. They are analysed in memory and discarded. The app
+binds only the camera's preview and analysis paths — it never constructs a photo or video capture,
+so there is no code path that could write a frame anywhere. Text recognition runs entirely
+on-device from a model bundled inside the APK, and the app still declares no network permission.
 
 ### 3.4 Viewing a card
 
@@ -148,7 +180,44 @@ The UI ships as `Theme.Material3.Dark.NoActionBar`. There is no light-mode varia
 
 ### 4.9 Card-network detection is prefix-based, not Luhn-validated
 
-Detection uses BIN prefix rules (see the network table in `REQUIREMENTS.md` §3.1). It does not run a Luhn checksum on the card number, so a number that starts with a Visa prefix but is otherwise invalid will still show the Visa logo on the preview.
+Detection uses BIN prefix rules (see the network table in `REQUIREMENTS.md` §3.1). It does not run a Luhn checksum on the card number, so a number that starts with a Visa prefix but is otherwise invalid will still show the Visa logo on the preview. A Luhn check *is* run separately, as a soft amber warning on the number field and as a confirm-before-save prompt — never as a block, because real cards (issuer test PANs, some virtual and private-label numbers) do fail it.
+
+### 4.10 Scanning never reads the CVV, and never will
+
+The scanner reads the card number, expiry, name and issuing bank. It does not read the security
+code, and this is structural rather than a setting: the data type that carries a scan result has
+four fields and none of them is a CVV, so there is nothing for one to be carried in. You will
+always type the CVV yourself.
+
+Two reasons. Practically, the code is on the reverse of most cards and the scanner only ever
+frames the front. More importantly, the CVV is the one value in the vault that is of little use to
+an attacker without the number — automatically pairing the two from a single camera pass would
+trade a real reduction in safety for two seconds of typing.
+
+### 4.11 Scanning is best-effort, and always needs checking
+
+OCR is not reliable enough to trust unread. Expect it to struggle with:
+
+- Worn, scratched, or flat-printed (unembossed) cards, and dark-on-dark colour schemes.
+- Glare — a glossy card under a ceiling light or with the torch on can wash out a whole row.
+- Cards where the name is stylised, or the bank name is a logo rather than text.
+- Four-digit-year expiries, vertical card layouts, and non-Latin scripts (the recogniser is
+  Latin-script only).
+- Digit confusions: `8`/`B`, `0`/`O`, `1`/`I`, `5`/`S`. The checksum warning catches many of these
+  but not all — two transposed digits can still pass Luhn.
+
+Always read back what it filled in before saving. The **Undo** action and the fact that every
+field stays editable are there because this will sometimes be wrong.
+
+### 4.12 The APK is large, and camera permission is requested
+
+Bundling the OCR model rather than downloading it means the app works with no network and no Google
+Play Services, but it costs roughly 12 MB: ~14.5 MB installed on arm64 against ~2 MB before. Builds
+are split per ABI so a device only downloads its own slice; `x86`/`x86_64` are not built at all.
+
+The app now requests `CAMERA`. It is asked for the first time you open the scanner, never at
+launch, and the app is fully usable if you decline. It is declared `required="false"`, so a device
+with no camera can still install and use everything except scanning.
 
 ---
 
@@ -158,16 +227,17 @@ Detection uses BIN prefix rules (see the network table in `REQUIREMENTS.md` §3.
 |---|---|
 | **Operating system** | Android **8.0 (API level 26)** or newer |
 | **Target Android** | Android 14 (API 34) |
-| **CPU architectures** | Any (pure Java/Kotlin; no native `.so` libraries) |
+| **CPU architectures** | `arm64-v8a` or `armeabi-v7a`. The bundled OCR engine ships native libraries, so `x86`/`x86_64` are deliberately not built — an x86_64 emulator needs them added back in `app/build.gradle.kts` |
 | **RAM** | No special requirement; a few tens of MB while running |
-| **Storage** | < 20 MB installed |
+| **Storage** | ~15 MB installed on arm64-v8a, ~11 MB on armeabi-v7a. Almost all of it is the bundled on-device OCR model |
 | **Screen** | Portrait phones. Tablets work but the layout is phone-first |
 | **Screen lock** | Recommended — required for the first (biometric / device-credential) lock layer to be effective. The app runs without one but degrades to in-app password only |
 | **Biometric hardware** | Optional — a device credential (PIN / pattern / password) satisfies the same lock layer |
 | **Network** | None. The app declares no `INTERNET` permission |
-| **Play Services** | Not required |
+| **Play Services** | Not required — the OCR model is bundled, not downloaded |
+| **Camera** | Optional. Needed only for card scanning; declared `required="false"` |
 
-**Permissions requested:** only `USE_BIOMETRIC` and `USE_FINGERPRINT`. No storage, camera, contacts, or internet access.
+**Permissions requested:** `USE_BIOMETRIC`, `USE_FINGERPRINT`, and `CAMERA`. The camera is used only while the scan screen is open, and no frame is ever stored. No storage, contacts, location, or internet access — `INTERNET` and `ACCESS_NETWORK_STATE` are explicitly stripped from the merged manifest, because a transitive telemetry dependency of the OCR library would otherwise add them.
 
 ---
 
@@ -221,6 +291,7 @@ For a full spec see `REQUIREMENTS.md` in this repository. In short:
 - Password verification uses a **canary blob** — a fixed plaintext encrypted with the derived key, stored in the database. A wrong password fails the GCM authentication tag on decryption; the password itself is never stored in any form.
 - Password changes are **atomic**: every card is re-wrapped with the new key and the new salt + canary are written inside a single Room `withTransaction`. A crash mid-change rolls back cleanly — either the old password still works and every card still decrypts, or the new password does.
 - On lock / background / logout / reset, the in-memory key handle is nulled and the Android Keystore alias `cardvault_master_key` is deleted. The key is re-derived from the persisted salt on the next unlock.
+- **Card scanning** runs entirely on-device, binds only the camera's preview and analysis paths (never a capture use case), writes no frame anywhere, logs nothing — a build-time gate enforces that — and never reads the CVV. The scan screen inherits `FLAG_SECURE` like every other screen.
 
 ---
 

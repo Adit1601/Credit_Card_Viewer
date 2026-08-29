@@ -82,7 +82,11 @@
                 android:layout_height="wrap_content"
                 android:layout_marginHorizontal="16dp"
                 android:layout_marginTop="8dp"
-                android:hint="@string/hint_card_number">
+                android:hint="@string/hint_card_number"
+                app:endIconMode="custom"
+                app:endIconDrawable="@drawable/ic_camera"
+                app:endIconTint="@color/accent"
+                app:endIconContentDescription="@string/scan_cd_pan_scan">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/panInput"

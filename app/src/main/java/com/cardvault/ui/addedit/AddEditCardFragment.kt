@@ -1,5 +1,6 @@
 package com.cardvault.ui.addedit
 
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
 import android.text.Editable
@@ -18,9 +19,12 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.cardvault.R
 import com.cardvault.data.db.CardType
+import com.cardvault.scan.ScanCandidate
 import com.cardvault.security.CardNetwork
 import com.cardvault.security.CardNetworkDetector
+import com.cardvault.ui.scan.ScanResultBridge
 import com.cardvault.util.CardFormatting
+import com.cardvault.util.Luhn
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
@@ -39,7 +43,26 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
 
     private var editingCardId: String? = null
     private var suppressWatchers: Boolean = false
-    private var dirty: Boolean = false
+
+    /**
+     * Whether the form has unsaved changes.
+     *
+     * Backed by the ViewModel so it outlives the view — see the state block in
+     * [AddEditCardViewModel] for why this and the three below had to move there.
+     */
+    private var dirty: Boolean
+        get() = viewModel.dirty
+        set(value) { viewModel.dirty = value }
+    /** Set once the user has dismissed the Luhn warning, so it never nags twice per PAN. */
+    private var luhnAcknowledged: Boolean = false
+    /**
+     * The form as it was immediately before a scan overwrote it, for the Undo action.
+     *
+     * Not persisted across rotation on purpose: the Snackbar that offers Undo does not survive a
+     * rotation either, so keeping the snapshot alive would only leave a dangling undo with no way
+     * to trigger it.
+     */
+    private var preScanSnapshot: FormSnapshot? = null
 
     private lateinit var toolbar: MaterialToolbar
     private lateinit var nicknameLayout: TextInputLayout
@@ -65,9 +88,15 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
     private lateinit var previewExpiry: TextView
     private lateinit var previewNetwork: ImageView
 
-    private var selectedColor: String = ColorPalette.default()
-    private var detectedNetwork: CardNetwork = CardNetwork.UNKNOWN
-    private var selectedCardType: CardType = CardType.UNKNOWN
+    private var selectedColor: String
+        get() = viewModel.selectedColor
+        set(value) { viewModel.selectedColor = value }
+    private var detectedNetwork: CardNetwork
+        get() = viewModel.detectedNetwork
+        set(value) { viewModel.detectedNetwork = value }
+    private var selectedCardType: CardType
+        get() = viewModel.selectedCardType
+        set(value) { viewModel.selectedCardType = value }
     private lateinit var paletteAdapter: ColorPaletteAdapter
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -87,6 +116,7 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
 
         wirePreview()
         wireWatchers()
+        wireLuhnWarning()
         wireColorPicker()
         wireCardTypePicker()
         wireBankSuggestions()
@@ -115,6 +145,33 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         }
 
         viewModel.loadIfEditing(editingCardId)
+        wireScan()
+
+        // Opens the window that [onViewStateRestored] closes, because restoring saved view state is
+        // not the user typing and must not be mistaken for it. Every restored field notifies the
+        // watchers wired above, and `MaterialButton` restores its own checked state so the toggle
+        // group's listener fires too — left alone they set `dirty` on a rotation the user did
+        // nothing in, and needlessly re-run the PAN reformat.
+        //
+        // It has to be set *here*: `Fragment.restoreViewState` calls `mView.restoreHierarchyState`
+        // and only then `onViewStateRestored`, so a flag raised inside that callback would already
+        // be too late.
+        suppressWatchers = true
+    }
+
+    /**
+     * Closes the suppression window opened at the end of [onViewCreated] and repaints what saved
+     * view state cannot carry.
+     *
+     * The live preview is plain `TextView`s, which save nothing, so it has to be redrawn from the
+     * just-restored fields rather than left to the watchers that were deliberately suppressed
+     * through the restore. Runs before `onStart`, so a genuinely first [applyInitial] still arrives
+     * afterwards and wins.
+     */
+    override fun onViewStateRestored(savedInstanceState: Bundle?) {
+        super.onViewStateRestored(savedInstanceState)
+        suppressWatchers = false
+        refreshPreview()
     }
 
     private fun bindViews(v: View) {
@@ -179,6 +236,10 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
             detectedNetwork = CardNetworkDetector.detect(digits)
             previewNetwork.setImageResource(detectedNetwork.logoRes)
             previewPan.text = CardFormatting.maskPan(digits)
+            // Editing the number retracts both the standing warning and any earlier
+            // acknowledgement — the new value has not been judged yet.
+            panLayout.helperText = null
+            luhnAcknowledged = false
         }
         expiryInput.doAfterChanged { raw ->
             if (suppressWatchers) return@doAfterChanged
@@ -200,6 +261,38 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         bankInput.doAfterChanged {
             if (suppressWatchers) return@doAfterChanged
             dirty = true
+        }
+    }
+
+    /**
+     * Soft Luhn feedback on the card number, evaluated when focus *leaves* the field.
+     *
+     * Not per-keystroke: a PAN in mid-entry almost always fails Luhn, so a live check would
+     * keep the field flagged for the entire time the user is typing. Focus-loss is the first
+     * honest moment to judge it.
+     *
+     * Uses helperText rather than error. `error` belongs to the hard 13-19 digit block in
+     * [attemptSave], and TextInputLayout hides helper text while an error is showing, so the
+     * soft warning and the hard block can never collide on screen.
+     *
+     * Nothing fires on load: [applyInitial] runs with watchers suppressed and never moves
+     * focus, so opening an existing card whose number fails Luhn stays silent until the user
+     * actually touches the field. We don't nag about stored data they didn't just type.
+     */
+    private fun wireLuhnWarning() {
+        panLayout.setHelperTextColor(
+            ColorStateList.valueOf(requireContext().getColor(R.color.warning_amber))
+        )
+        panInput.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) return@setOnFocusChangeListener
+            val digits = panInput.text?.toString().orEmpty().filter(Char::isDigit)
+            // Out-of-range lengths are the hard validator's business, not ours.
+            panLayout.helperText =
+                if (digits.length in 13..19 && !Luhn.isValid(digits)) {
+                    getString(R.string.warning_pan_checksum)
+                } else {
+                    null
+                }
         }
     }
 
@@ -264,6 +357,18 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
     }
 
     private fun applyInitial(e: EditableCard) {
+        // Second or later delivery for the same editing session — a rotation, or the pop back from
+        // the scanner. [AddEditCardViewModel.initial] is retained LiveData and replays its value to
+        // every new observer, so writing the stored row again here would silently discard whatever
+        // the user has typed since, and reset `dirty` along with it.
+        //
+        // Nothing needs re-applying on that path: the text fields and the type toggle come back from
+        // saved view state, [onViewStateRestored] repaints the preview, and the state that is in
+        // neither now lives on the ViewModel. A form that is genuinely empty means the ViewModel was
+        // rebuilt too, which resets this flag with it.
+        if (viewModel.initialApplied) return
+        viewModel.initialApplied = true
+
         suppressWatchers = true
         nicknameInput.setText(e.nickname)
         nameInput.setText(e.nameOnCard)
@@ -281,15 +386,167 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         if (typeButtonId != View.NO_ID) cardTypeGroup.check(typeButtonId) else cardTypeGroup.clearChecked()
         suppressWatchers = false
 
-        previewNickname.text = e.nickname
-        previewName.text = e.nameOnCard.uppercase()
-        previewPan.text = CardFormatting.maskPan(e.cardNumberDigits)
-        previewExpiry.text = CardFormatting.formatExpiry(e.expiryDigits)
-        previewNetwork.setImageResource(detectedNetwork.logoRes)
-        previewCard.setCardBackgroundColor(parseHex(e.colorHex))
-
+        refreshPreview()
         dirty = false
     }
+
+    /**
+     * Repaints the live preview from the current field values.
+     *
+     * Every path that writes the fields with [suppressWatchers] on needs this: the watchers are
+     * what normally keep the preview in step, so suppressing them also suppresses the preview.
+     */
+    private fun refreshPreview() {
+        previewNickname.text = nicknameInput.text?.toString().orEmpty()
+        previewName.text = nameInput.text?.toString().orEmpty().uppercase()
+        previewPan.text = CardFormatting.maskPan(currentPanDigits())
+        previewExpiry.text = CardFormatting.formatExpiry(
+            expiryInput.text?.toString().orEmpty().filter(Char::isDigit)
+        )
+        previewNetwork.setImageResource(detectedNetwork.logoRes)
+        previewCard.setCardBackgroundColor(parseHex(selectedColor))
+    }
+
+    // ---- scanning ----------------------------------------------------------------------------
+
+    private fun wireScan() {
+        // The camera lives inside the number field's end icon rather than as a separate button:
+        // it sits next to the field it mostly fills in, costs no vertical space, and the edit
+        // screen gets it for free (re-scanning a mistyped number is a legitimate correction).
+        panLayout.setEndIconOnClickListener {
+            // Cleared on the way *out*, not on the way back in. The flag exists only to stop a
+            // rotation re-applying an already-applied result; clearing it here means a second,
+            // deliberate scan still lands.
+            viewModel.scanApplied = false
+            findNavController().navigate(R.id.action_add_to_scan)
+        }
+
+        // Route A — the scanner popped back to a form that was already on the stack, so the
+        // user's partially typed input is still here and must survive.
+        val entry = findNavController().currentBackStackEntry
+        entry?.savedStateHandle
+            ?.getLiveData<Bundle?>(ScanResultBridge.KEY_SCAN_RESULT)
+            ?.observe(viewLifecycleOwner) { bundle ->
+                if (bundle == null) return@observe
+                // Null out rather than remove(): SavedStateHandle.remove() also drops the
+                // LiveData, which would leave this observer permanently disconnected and
+                // silently swallow the *second* scan from this form. Setting null keeps the
+                // channel open and still stops the rotation replay from re-applying.
+                entry.savedStateHandle[ScanResultBridge.KEY_SCAN_RESULT] = null
+                applyScan(ScanResultBridge.fromBundle(bundle))
+            }
+
+        // Route B — Home sent the user straight to the scanner, which navigated *here* with the
+        // result as arguments. There was no form on the stack to pop back to in that flow.
+        val fromArgs = arguments?.getBundle(ScanResultBridge.KEY_SCAN_RESULT)
+        if (fromArgs != null) {
+            // arguments is the same Bundle instance the framework saves and restores, so the
+            // removal survives rotation. viewModel.scanApplied backs it up either way.
+            arguments?.remove(ScanResultBridge.KEY_SCAN_RESULT)
+            applyScan(ScanResultBridge.fromBundle(fromArgs))
+        }
+    }
+
+    /**
+     * Fills the form from a scan.
+     *
+     * Modelled on [applyInitial] — suppress the watchers, run the setters, refresh the preview
+     * explicitly — with three deliberate differences:
+     *
+     *  - **CVV is never written.** The scanner does not read security codes, [ScanCandidate] has
+     *    no field for one, and this method has no line that touches [cvvInput]. The field is left
+     *    empty and given focus instead, because it is the one thing the user must still type.
+     *  - Only fields the scan actually resolved are written. `null` means "could not read", not
+     *    "empty", so blanking on null would destroy input the user had already typed.
+     *  - `dirty` is left **true**. A scanned-but-unsaved form genuinely has unsaved changes and
+     *    backing out of it should warn.
+     */
+    private fun applyScan(scan: ScanCandidate) {
+        if (viewModel.scanApplied) return
+        viewModel.scanApplied = true
+
+        if (scan.isEmpty) {
+            Snackbar.make(requireView(), R.string.scan_applied_nothing, Snackbar.LENGTH_LONG).show()
+            return
+        }
+
+        preScanSnapshot = takeSnapshot()
+
+        suppressWatchers = true
+        scan.nameOnCard?.let { nameInput.setText(it) }
+        scan.panDigits?.let {
+            panInput.setText(CardFormatting.formatPanForDisplay(it))
+            detectedNetwork = CardNetworkDetector.detect(it)
+        }
+        scan.expiryDigits?.let { expiryInput.setText(CardFormatting.formatExpiry(it)) }
+        // filter=false, same reason as applyInitial: setText would otherwise pop the dropdown.
+        scan.issuingBank?.let { bankInput.setText(it, false) }
+        suppressWatchers = false
+
+        refreshPreview()
+        dirty = true
+
+        // A single misread digit is the likeliest way a scan goes wrong, and Luhn is the only
+        // check that can catch it. Evaluate it now rather than waiting for the focus-loss check,
+        // which may never fire if the user goes straight to CVV and saves.
+        val panDigits = currentPanDigits()
+        luhnAcknowledged = false
+        panLayout.helperText =
+            if (panDigits.length in 13..19 && !Luhn.isValid(panDigits)) {
+                getString(R.string.warning_pan_checksum)
+            } else {
+                null
+            }
+
+        cvvInput.requestFocus()
+
+        val complete = scan.panDigits != null && scan.expiryDigits != null &&
+            scan.nameOnCard != null && scan.issuingBank != null
+        Snackbar.make(
+            requireView(),
+            if (complete) R.string.scan_applied_full else R.string.scan_applied_partial,
+            Snackbar.LENGTH_LONG
+        ).setAction(R.string.scan_action_undo) { undoScan() }.show()
+    }
+
+    /**
+     * Puts back exactly what the scan overwrote.
+     *
+     * The escape hatch for the case OCR handles worst: the user had already typed the number
+     * correctly, scanned to fill in the rest, and the scan replaced good input with a misread.
+     */
+    private fun undoScan() {
+        val before = preScanSnapshot ?: return
+        preScanSnapshot = null
+
+        suppressWatchers = true
+        nameInput.setText(before.nameOnCard)
+        panInput.setText(before.panText)
+        expiryInput.setText(before.expiryText)
+        bankInput.setText(before.issuingBank, false)
+        detectedNetwork = before.network
+        suppressWatchers = false
+
+        refreshPreview()
+        // Restored, not forced: if the form was untouched before the scan it is untouched again,
+        // so backing out should not warn about changes that no longer exist.
+        dirty = before.dirty
+        panLayout.helperText = null
+        luhnAcknowledged = false
+        Snackbar.make(requireView(), R.string.scan_undone, Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun takeSnapshot(): FormSnapshot = FormSnapshot(
+        nameOnCard = nameInput.text?.toString().orEmpty(),
+        panText = panInput.text?.toString().orEmpty(),
+        expiryText = expiryInput.text?.toString().orEmpty(),
+        issuingBank = bankInput.text?.toString().orEmpty(),
+        network = detectedNetwork,
+        dirty = dirty
+    )
+
+    private fun currentPanDigits(): String =
+        panInput.text?.toString().orEmpty().filter(Char::isDigit)
 
     private fun attemptSave() {
         clearErrors()
@@ -309,6 +566,13 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
         if (cvvDigits.length !in 3..4) { cvvLayout.error = getString(R.string.error_cvv_length); ok = false }
         if (!ok) return
 
+        // Soft checksum gate, deliberately after hard validation so the user never gets a
+        // checksum dialog stacked on top of "nickname required".
+        if (!luhnAcknowledged && !Luhn.isValid(panDigits)) {
+            confirmLuhnMismatch()
+            return
+        }
+
         saveButton.isEnabled = false
         viewModel.save(
             FormInput(
@@ -324,6 +588,27 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
             editingCardId = editingCardId,
             detectedNetwork = detectedNetwork
         )
+    }
+
+    /**
+     * A failed checksum is a warning, never a block. Real numbers do fail Luhn — issuer test
+     * PANs, some virtual/disposable numbers, gift and private-label cards — and being unable
+     * to store a card you actually hold is a worse outcome than a mistyped digit.
+     */
+    private fun confirmLuhnMismatch() {
+        panLayout.helperText = getString(R.string.warning_pan_checksum)
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.luhn_warning_title)
+            .setMessage(R.string.luhn_warning_body)
+            .setPositiveButton(R.string.action_save_anyway) { _, _ ->
+                luhnAcknowledged = true
+                attemptSave() // re-enters with the flag set, so it cannot loop
+            }
+            .setNegativeButton(R.string.action_let_me_check) { _, _ ->
+                panInput.requestFocus()
+                panInput.setSelection(panInput.text?.length ?: 0)
+            }
+            .show()
     }
 
     private fun clearErrors() {
@@ -364,6 +649,21 @@ class AddEditCardFragment : Fragment(R.layout.fragment_add_edit_card) {
     private fun parseHex(hex: String): Int = runCatching { Color.parseColor(hex) }
         .getOrDefault(requireContext().getColor(R.color.card_slate))
 }
+
+/**
+ * The slice of the form a scan can overwrite, captured for Undo.
+ *
+ * CVV is deliberately absent: nothing in the scan path writes it, so nothing needs restoring.
+ * Nickname and colour are absent for the same reason.
+ */
+private data class FormSnapshot(
+    val nameOnCard: String,
+    val panText: String,
+    val expiryText: String,
+    val issuingBank: String,
+    val network: CardNetwork,
+    val dirty: Boolean
+)
 
 /** EditText helper — lambda gets called after every text change with the current value. */
 private inline fun android.widget.EditText.doAfterChanged(crossinline block: (String) -> Unit) {

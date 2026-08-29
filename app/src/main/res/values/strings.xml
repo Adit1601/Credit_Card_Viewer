@@ -79,6 +79,15 @@
     <string name="error_expiry_format">Expiry must be MM/YY</string>
     <string name="error_expiry_past">Expiry is in the past</string>
     <string name="error_cvv_length">CVV must be 3 or 4 digits</string>
+
+    <!-- Luhn (mod-10) checksum on the PAN. Deliberately a soft warning, never a hard block:
+         issuer test PANs, some virtual/disposable numbers and gift cards legitimately fail it,
+         and being unable to store a card you actually hold is worse than a mistyped digit. -->
+    <string name="warning_pan_checksum">Checksum looks off — worth double-checking the number</string>
+    <string name="luhn_warning_title">Check the card number</string>
+    <string name="luhn_warning_body">This number\'s checksum doesn\'t look right, which usually means one digit is off. You can save it anyway.</string>
+    <string name="action_save_anyway">Save anyway</string>
+    <string name="action_let_me_check">Let me check</string>
     <string name="unsaved_changes_title">Discard changes?</string>
     <string name="unsaved_changes_body">Your changes will be lost.</string>
     <string name="action_discard">Discard</string>
@@ -143,4 +152,63 @@
     <string name="cd_network_discover">Discover</string>
     <string name="cd_network_diners">Diners Club</string>
     <string name="cd_network_unknown">Card</string>
+
+    <!-- Toolbar up-affordance. The older screens reuse action_cancel here, which reads
+         "Cancel" to a screen reader on what is a plain Back arrow; new screens use this. -->
+    <string name="cd_back">Back</string>
+
+    <!-- Card scanning -->
+    <string name="scan_title">Scan card</string>
+    <string name="scan_hint">Hold the front of the card inside the frame</string>
+    <string name="scan_cd_preview">Camera preview for card scanning</string>
+    <string name="scan_action_manual">Enter manually</string>
+
+    <string name="scan_permission_title">Camera access needed</string>
+    <string name="scan_permission_body">Scanning reads the card with the camera. The image is processed on this device and never saved or sent anywhere \u2014 the vault has no internet permission at all.</string>
+    <string name="scan_permission_action">Allow camera</string>
+
+    <string name="scan_permission_blocked_title">Camera is turned off</string>
+    <string name="scan_permission_blocked_body">Camera access for Card Vault is disabled in Android settings, so scanning can\u2019t start. Turn it on there, or just type the card in.</string>
+    <string name="scan_permission_blocked_action">Open settings</string>
+
+    <string name="scan_no_camera_title">No camera on this device</string>
+    <string name="scan_no_camera_body">Scanning needs a camera. Everything else works as normal \u2014 add the card by hand instead.</string>
+
+    <string name="scan_error_title">Camera didn\u2019t start</string>
+    <string name="scan_error_body">Something else may be using the camera. Close other camera apps and try again, or add the card by hand.</string>
+    <string name="scan_error_action">Try again</string>
+
+    <!-- Overlay checklist. Short labels: four of them sit side by side on a phone. -->
+    <string name="scan_field_pan">Number</string>
+    <string name="scan_field_expiry">Expiry</string>
+    <string name="scan_field_name">Name</string>
+    <string name="scan_field_bank">Bank</string>
+    <string name="scan_cd_field_pending">%1$s not found yet</string>
+    <string name="scan_cd_field_locked">%1$s found</string>
+    <string name="scan_a11y_field_locked">%1$s found</string>
+
+    <string name="scan_action_use_partial">Use what was found</string>
+    <string name="scan_cd_torch">Torch</string>
+    <string name="scan_hint_low_light">Too dark \u2014 turn on the torch or move to better light</string>
+    <string name="scan_hint_hold_steady">Hold steady \u2014 fill the frame with the card</string>
+
+    <string name="scan_timeout_title">Couldn\u2019t read the card</string>
+    <string name="scan_timeout_body">Embossed and worn cards are hard to read, especially in low light. Try again with the torch on, or type the card in \u2014 that always works.</string>
+    <string name="scan_timeout_action">Try again</string>
+
+    <!-- Applied-to-form feedback -->
+    <string name="scan_applied_full">Card details filled in \u2014 add the CVV to finish</string>
+    <string name="scan_applied_partial">Filled in what could be read \u2014 check it and add the CVV</string>
+    <string name="scan_applied_nothing">Nothing could be read from the card</string>
+    <string name="scan_action_undo">Undo</string>
+    <string name="scan_undone">Scan undone</string>
+    <string name="scan_cd_pan_scan">Scan card with camera</string>
+
+    <!-- Home chooser sheet -->
+    <string name="add_choice_title">Add a card</string>
+    <string name="add_choice_scan">Scan card</string>
+    <string name="add_choice_scan_sub">Reads the number, expiry, name and bank</string>
+    <string name="add_choice_manual">Enter manually</string>
+    <string name="add_choice_manual_sub">Type the details in yourself</string>
+
 </resources>

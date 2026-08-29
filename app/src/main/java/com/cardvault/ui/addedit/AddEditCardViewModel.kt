@@ -19,12 +19,64 @@ class AddEditCardViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = CardRepository(AppDatabase.get(app).cardDao())
 
+    /**
+     * True once a scan result has been written into the form.
+     *
+     * Lives here rather than in the fragment because it must survive a rotation: both delivery
+     * channels (a back-stack `SavedStateHandle` LiveData and the fragment's own `arguments`)
+     * replay their value to the rebuilt fragment, and re-applying would silently overwrite
+     * corrections the user typed after the scan. Reset by the fragment immediately *before* it
+     * navigates to the scanner, so a deliberate re-scan still lands.
+     */
+    var scanApplied: Boolean = false
+
     val initial = MutableLiveData<EditableCard?>(null)
     val savedEvent = MutableLiveData<Unit?>(null)
     val fatalError = MutableLiveData<String?>(null)
 
+    // ---- form state that outlives the view ----------------------------------------------------
+    //
+    // Saved view state covers the text fields and the card-type toggle, and the framework restores
+    // those on its own. It does not cover any of the four below: `dirty` and `selectedColor` are
+    // plain fragment state, the palette's selection lives in an adapter that is rebuilt from
+    // scratch, and `detectedNetwork` is derived. They used to be fragment fields, which meant a
+    // rotation reset them and `applyInitial` had to re-run in full to put them back — overwriting
+    // the user's restored input with the stored row in the process. Holding them here is what lets
+    // `applyInitial` stay a one-shot.
+
+    /** True once the stored row has been written into the form. See [loadStarted]. */
+    var initialApplied: Boolean = false
+
+    /**
+     * Whether the form has unsaved changes, i.e. whether backing out should warn.
+     *
+     * Rotation used to clear this, so a rotated form could be abandoned without a prompt.
+     */
+    var dirty: Boolean = false
+
+    var selectedColor: String = ColorPalette.default()
+    var detectedNetwork: CardNetwork = CardNetwork.UNKNOWN
+    var selectedCardType: CardType = CardType.UNKNOWN
+
+    /**
+     * True once the edited row has been read, set **synchronously** before the coroutine launches.
+     *
+     * A `initial.value != null` check would not close this: `initial` only fills in when the
+     * decrypt lands, so a view recreated before then — which is exactly what returning from the
+     * scanner is — would slip a second load through. Its late `initial.value = decrypted` then
+     * dispatches [initial] again *after* the scan has already filled the form, and `applyInitial`
+     * silently restores the stored card over the scanned one with `dirty` back to false. Rotating
+     * mid-edit did the same to typed input.
+     *
+     * Never reset. It is scoped to the ViewModel, which is scoped to one editing session, and
+     * neither failure path wants a retry: `fatalError` pops the form, and a row that has vanished
+     * is not going to reappear.
+     */
+    private var loadStarted: Boolean = false
+
     fun loadIfEditing(cardId: String?) {
-        if (cardId == null) return
+        if (cardId == null || loadStarted) return
+        loadStarted = true
         viewModelScope.launch {
             val entity = withContext(Dispatchers.IO) { repo.getById(cardId) } ?: return@launch
             val key = SessionManager.getMasterKey() ?: run {

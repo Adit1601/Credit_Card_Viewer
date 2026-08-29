@@ -11,6 +11,9 @@
 /app/release
 /app/debug
 
+# Kotlin compiler daemon session files — regenerated on every build.
+/.kotlin/
+
 # Signing — NEVER commit either of these.
 keystore.properties
 *.jks
