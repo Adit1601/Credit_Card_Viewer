@@ -13,7 +13,7 @@ Key design principles:
 - **Fully offline.** The app requests no network permissions at all. Nothing ever leaves the device.
 - **Encrypted at rest.** Card number, expiry, and CVV are stored using AES-256-GCM. The encryption key is derived from your in-app password via PBKDF2 (100,000 iterations) and held only transiently in the Android Keystore during an unlocked session.
 - **Two independent lock layers.** Every launch (and every return from the background) requires biometric / device credential *and* the in-app password you set during onboarding.
-- **No cloud, no backup, no autofill.** The database is excluded from Google backup, the app is invisible in the recents / app-switcher preview, and screenshots are blocked on every screen.
+- **No cloud, no backup, no autofill.** The database is excluded from Google backup, the recents / app-switcher preview is blank, and screenshots are blocked on every screen.
 
 ---
 
@@ -52,15 +52,29 @@ It is not intended to replace a full password manager. It is a small, auditable 
 
 Every time you open the app (or return to it after the OS backgrounds it), you go through:
 
-1. **Biometric / device credential** — fingerprint, face, PIN, pattern, or password, using Android's `BiometricPrompt`.
+1. **Biometric / device credential** — fingerprint, face, PIN, pattern, or password, using Android's `BiometricPrompt`. The app asks for the strongest thing your phone can offer, in this order: Class 3 biometric or device credential → Class 2 biometric or device credential → device credential only.
 2. **In-app password** — the one you chose during onboarding.
 
-If either step fails or is cancelled, the app closes itself.
+If you cancel the biometric prompt yourself, the app closes silently. If the prompt fails for a system reason instead (hardware unavailable, too many failed attempts, biometrics removed), the app shows you Android's own explanation before closing, so it does not just vanish.
 
-### 3.3 Adding a card
+If the phone has **no screen lock at all**, step 1 cannot run. Instead you get a dialog offering to open **Security Settings**, to cancel, or to **continue anyway** — and continuing drops you straight to the in-app password, with only one lock layer left.
+
+### 3.3 The main screen
+
+The card list is the home screen. Above it:
+
+- The toolbar title shows **Cards**, with a **`n / 30`** subtitle counting what you have stored.
+- The toolbar's left-hand **+** icon adds a card; the right side has **search** and **settings**.
+- A **bank filter** chip strip sits under the toolbar (see §3.7).
+
+Each card tile shows the nickname, the network logo, the masked number, the name on card in capitals, the expiry, and — where they apply — two small badges: the **card type** (Debit / Credit / Prepaid, hidden if you left it unset) and an amber **Expires soon** badge for any card expiring within the next two months.
+
+With no cards at all you get a **No cards yet** empty state. With cards but no search hits you get **No cards match your search.** instead.
+
+### 3.4 Adding a card
 
 - Tap the **+** button in the top-left of the toolbar on the main screen.
-- Choose **Scan card** to fill the form from the physical card with the camera (see §3.3.1), or
+- Choose **Scan card** to fill the form from the physical card with the camera (see §3.4.1), or
   **Enter manually** to type it in.
 - Fill in:
   - **Nickname** — e.g. "HDFC Rewards Platinum".
@@ -68,13 +82,18 @@ If either step fails or is cancelled, the app closes itself.
   - **Card number** — auto-formats with a space every 4 digits; 13–19 digits accepted.
   - **Expiry** — auto-formats as `MM/YY`.
   - **CVV** — 3–4 digits, masked while typing.
-  - **Colour** — one of ~12 preset tile colours.
+  - **Issuing bank** — optional, with autocomplete over 18 built-in bank names plus every bank you
+    have already typed on another card. This field is what the bank filter chips on the main screen
+    are built from.
+  - **Card type** — optional toggle: **Debit**, **Credit**, or **Prepaid**. Shown as a badge on the
+    tile when set.
+  - **Colour** — one of 12 preset tile colours.
 - The card network (Visa / Mastercard / Amex / RuPay / Discover / Diners) is detected in real time from the BIN prefix and shown on the live preview at the top of the screen. No network call is made.
 - Tap **Save**. Card number, expiry and CVV are encrypted before being written to the local database.
 
 You can store **up to 30 cards**.
 
-#### 3.3.1 Scanning a card
+#### 3.4.1 Scanning a card
 
 Hold the front of the card inside the on-screen frame. A checklist shows what has been read so
 far: **Number**, **Expiry**, **Name**, **Bank**. Each field only ticks after three separate frames
@@ -104,29 +123,46 @@ binds only the camera's preview and analysis paths — it never constructs a pho
 so there is no code path that could write a frame anywhere. Text recognition runs entirely
 on-device from a model bundled inside the APK, and the app still declares no network permission.
 
-### 3.4 Viewing a card
+### 3.5 Viewing a card
 
 Tap any card tile on the main screen to open its detail view. There you can:
 
 - **Tap the card number** to toggle between masked (`•••• •••• •••• 1234`) and revealed.
 - **Tap the copy icon** next to any field to copy it to the clipboard.
-- **Tap "Show CVV"** — you will be prompted to re-enter your in-app password. On success the CVV is displayed.
-- **Copy CVV** — same in-app-password prompt; on success the CVV is placed on the clipboard.
+- **Tap "Show CVV"** — you are asked to re-authenticate. The app tries a **fingerprint / face prompt** first (Class 3 biometric only, no device-PIN fallback) and drops to the **in-app password dialog** if biometrics are unavailable, not enrolled, or you dismiss the prompt. On success the CVV is displayed and the button becomes **Hide CVV** — tapping that re-masks it straight away, with no second prompt.
+- **Copy CVV** — the same re-authentication; on success the CVV is placed on the clipboard.
+
+The CVV re-hides itself and a revealed card number re-masks itself whenever you leave the screen — including a trip to the background or the app switcher — so coming back never shows a value you last revealed minutes ago.
+
+If you set **CVV re-auth mode** to *Per session* in Settings, the first successful CVV re-auth covers every later reveal or copy until the vault locks. On the default *Per action*, every single reveal and every single copy prompts.
 
 Whenever a sensitive value (card number or CVV) is copied, a small notice tells you the clipboard will be cleared in 30 seconds, and it is (only if the value you copied is still there — copying something else in the meantime cancels the auto-clear so it doesn't stomp on your own copy).
 
-### 3.5 Editing / deleting / reordering
+### 3.6 Editing / deleting / reordering
 
 - **Long-press** a card tile on the main screen for a bottom sheet with **Reorder**, **Edit**, and **Delete**.
-- **Reorder** enters a drag-to-reorder mode with a **Done** button in the toolbar; the new order is saved to the database.
+- **Edit** also has an icon on the card detail screen; **Delete** is available from both places too.
+- **Reorder** enters a drag-to-reorder mode with a **Done** button in the toolbar. Drags start from
+  the drag handle that appears on each tile — long-pressing the tile body does not start a drag — and the
+  new order is written to the database as soon as you drop a card.
+- Reorder mode is only available on the complete list. If a search is active you get *Clear search
+  first to reorder*; if a bank filter is active, *Clear the bank filter first to reorder*. This is
+  deliberate: dragging within a filtered subset would produce an order that makes no sense against
+  the rows you cannot see.
 - **Delete** asks for a single confirmation before removing the card.
 
-### 3.6 Searching and filtering
+### 3.7 Searching and filtering
 
-- A search bar in the toolbar filters cards by nickname or name-on-card substring.
-- A **bank filter** chip strip above the list narrows the visible cards to a chosen bank (derived from the nickname prefix). "All" is selected by default.
+- A search bar in the toolbar filters cards by **nickname** or by the **last 4 digits** of the card
+  number — those are the only two things searched. The name on the card is not matched, because it
+  is usually the same on every card you own.
+- A **bank filter** chip strip above the list narrows the visible cards to one bank. The chips are
+  built from the **Issuing bank** values you actually entered, so the strip only ever shows banks
+  you have cards from. **All** is selected by default, and an **Unknown** chip appears if any card
+  has no bank set.
+- Search and the bank filter compose: a query and a chip together show only cards matching both.
 
-### 3.7 Settings
+### 3.8 Settings
 
 Reached from the gear icon in the toolbar.
 
@@ -219,6 +255,19 @@ The app now requests `CAMERA`. It is asked for the first time you open the scann
 launch, and the app is fully usable if you decline. It is declared `required="false"`, so a device
 with no camera can still install and use everything except scanning.
 
+### 4.13 "Expires soon" also covers cards that already expired
+
+The amber badge fires for any expiry at or before two months from today, which includes cards that
+expired years ago — a card from 2018 is labelled *Expires soon* rather than *Expired*. Relatedly,
+the Add/Edit form refuses to save a card whose expiry is in the past, so you cannot keep an expired
+card in the vault for reference without giving it a future date.
+
+### 4.14 Amex numbers are grouped 4-4-4-4
+
+American Express prints its 15-digit number as 4-6-5. The app formats every number in groups of
+four regardless of network, so an Amex number is displayed with the wrong spacing. The digits stored
+and copied are correct — only the on-screen grouping differs from the physical card.
+
 ---
 
 ## 5. System requirements
@@ -230,7 +279,7 @@ with no camera can still install and use everything except scanning.
 | **CPU architectures** | `arm64-v8a` or `armeabi-v7a`. The bundled OCR engine ships native libraries, so `x86`/`x86_64` are deliberately not built — an x86_64 emulator needs them added back in `app/build.gradle.kts` |
 | **RAM** | No special requirement; a few tens of MB while running |
 | **Storage** | ~15 MB installed on arm64-v8a, ~11 MB on armeabi-v7a. Almost all of it is the bundled on-device OCR model |
-| **Screen** | Portrait phones. Tablets work but the layout is phone-first |
+| **Screen** | Portrait phones. Tablets work but the layout is phone-first. Rotating is safe in either orientation — it does not lock the vault or lose what you were typing |
 | **Screen lock** | Recommended — required for the first (biometric / device-credential) lock layer to be effective. The app runs without one but degrades to in-app password only |
 | **Biometric hardware** | Optional — a device credential (PIN / pattern / password) satisfies the same lock layer |
 | **Network** | None. The app declares no `INTERNET` permission |
@@ -255,8 +304,17 @@ If you want to build the app yourself instead of installing the released `.apk`:
 ```bash
 git clone <this-repository-url>
 cd Credit_Card_Viewer
-./gradlew assembleRelease     # produces app/build/outputs/apk/release/app-release.apk
+./gradlew assembleRelease
 ```
+
+The build is split per ABI (§4.12), so this produces three files in
+`app/build/outputs/apk/release/` rather than a single `app-release.apk`:
+
+| File | Install it on |
+|---|---|
+| `app-arm64-v8a-release.apk` | any phone from roughly 2016 on — the one you almost certainly want |
+| `app-armeabi-v7a-release.apk` | older 32-bit devices |
+| `app-universal-release.apk` | carries both of the above; use it when handing someone a single file that works anywhere |
 
 If you have no release keystore configured at `~/keys/keystore.properties`, the release build is produced **unsigned** (rather than silently falling back to the debug key). To produce a signed release, create that file with:
 
@@ -271,8 +329,11 @@ For a quick installable debug build:
 
 ```bash
 ./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 ```
+
+Same three-way split as the release build, so swap in `app-armeabi-v7a-debug.apk` or
+`app-universal-debug.apk` if arm64 is not what you are installing onto.
 
 **Run tests**
 
@@ -295,6 +356,16 @@ For a full spec see `REQUIREMENTS.md` in this repository. In short:
 
 ---
 
-## 8. Disclaimer
+## 8. Further reading
+
+| Document | Contents |
+|---|---|
+| [`WORKFLOWS.md`](WORKFLOWS.md) | Every user workflow traced step by step — including every branch and failure state, and where each one leaves you. The place to look for "what happens if…". |
+| [`REQUIREMENTS.md`](REQUIREMENTS.md) | Full specification: security model, data model, feature inventory, bug catalogue, limitations and assumptions. |
+| [`SCAN_FEATURE_PLAN.md`](SCAN_FEATURE_PLAN.md) | Design record for card scanning, including why the CVV is never read and the build-time gate that enforces it. |
+
+---
+
+## 9. Disclaimer
 
 Card Vault is a personal project. It has not undergone an independent security audit. The author provides no warranty and accepts no liability for lost data or unauthorised access. Use it at your own risk, and always keep an independent record of your card details somewhere you can recover them from.

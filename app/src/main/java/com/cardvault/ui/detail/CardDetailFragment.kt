@@ -37,6 +37,7 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
     private var cardId: String? = null
     private var pending: PendingCvvAction? = null
     private var isNumberRevealed: Boolean = false
+    private var isCvvRevealed: Boolean = false
 
     private lateinit var toolbar: MaterialToolbar
     private lateinit var previewCard: MaterialCardView
@@ -119,7 +120,7 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
     override fun onPause() {
         super.onPause()
         // §6.3 — CVV hides when the user leaves the screen or backgrounds the app.
-        rowCvv.text = getString(R.string.detail_cvv_hidden)
+        hideCvv()
         // Same policy for the revealed PAN. Otherwise a brief background→foreground with
         // lock-on-background=false would return the user to a screen that still shows the
         // full card number.
@@ -174,7 +175,7 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
         toggleNumber.setImageResource(R.drawable.ic_visibility)
         toggleNumber.contentDescription = getString(R.string.detail_reveal_number)
         rowExpiry.text = CardFormatting.formatExpiry(s.expiryDigits)
-        rowCvv.text = getString(R.string.detail_cvv_hidden)
+        hideCvv()
         rowNetwork.text = getString(s.network.contentDescRes)
 
         previewCard.setCardBackgroundColor(parseHex(s.colorHex))
@@ -212,7 +213,14 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
         }
 
         showCvvButton.setOnClickListener {
-            if (canSkipCvvReauth()) revealCvv() else request(PendingCvvAction.REVEAL)
+            // Hiding again is not a privileged action, so it never re-prompts — only revealing
+            // does. Without this the button sat there reading "Show CVV" over an already-visible
+            // CVV, and tapping it re-ran the whole biometric/password prompt to no visible effect.
+            when {
+                isCvvRevealed -> hideCvv()
+                canSkipCvvReauth() -> revealCvv()
+                else -> request(PendingCvvAction.REVEAL)
+            }
         }
         copyCvv.setOnClickListener {
             if (canSkipCvvReauth()) copyCvvToClipboard() else request(PendingCvvAction.COPY)
@@ -242,6 +250,15 @@ class CardDetailFragment : Fragment(R.layout.fragment_card_detail) {
 
     private fun revealCvv() {
         rowCvv.text = viewModel.state.value?.cvvDigits ?: return
+        isCvvRevealed = true
+        showCvvButton.setText(R.string.detail_hide_cvv)
+    }
+
+    /** Re-masks the CVV and puts the button back to "Show CVV", in lock-step. */
+    private fun hideCvv() {
+        isCvvRevealed = false
+        rowCvv.text = getString(R.string.detail_cvv_hidden)
+        showCvvButton.setText(R.string.detail_show_cvv)
     }
 
     private fun copyCvvToClipboard() {

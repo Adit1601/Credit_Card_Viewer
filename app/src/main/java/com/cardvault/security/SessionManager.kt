@@ -48,7 +48,12 @@ object SessionManager {
         runCatching { CryptoManager.removeMasterKey() }
     }
 
-    /** Set by MainActivity.onStop when the user backgrounds the app. */
+    /**
+     * Nothing calls this. The comment used to say "set by MainActivity.onStop", which was never
+     * true: backgrounding calls [lock], and that already sets `needsReauth`. Kept because
+     * REQUIREMENTS §16.2 documents the flag as a soft gate rather than a hard one — if it is ever
+     * removed, remove that limitation with it.
+     */
     @Synchronized
     fun markNeedsReauth() {
         needsReauth = true

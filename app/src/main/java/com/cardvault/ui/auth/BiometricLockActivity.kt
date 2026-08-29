@@ -38,6 +38,40 @@ class BiometricLockActivity : AppCompatActivity() {
         )
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_biometric_lock)
+
+        // A configuration change rebuilds this activity, and the FragmentManager restores
+        // AppPasswordFragment on its own — but setContentView has just reset password_container to
+        // the `gone` the layout declares, and the guard flag to false. Both halves matter: without
+        // the visibility the restored fragment sits inside an invisible container, and without the
+        // flag onStart re-fires the biometric prompt over the password screen the user was already
+        // typing into.
+        //
+        // Only a configuration change puts the flag in the bundle — see onSaveInstanceState.
+        if (savedInstanceState?.getBoolean(STATE_PASSWORD_SHOWN) == true) {
+            passwordFragmentShown = true
+            revealPasswordContainer()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Saved for a configuration change ONLY. A non-null bundle in onCreate does not mean "the
+        // screen rotated" — the system also hands one back after it has killed the process, and the
+        // task is then restored from Recents into a brand-new process. Persisting the flag there
+        // restored it as `true` on what is genuinely a cold launch, onStart early-returned, and
+        // layer 1 was skipped entirely: the app opened straight onto the password screen with no
+        // biometric or device-credential check. Measured on a Pixel 9 Pro emulator — after
+        // `am kill`, onCreate saw `saved=true, flagInBundle=true`, while a rotation is the only
+        // path where `isChangingConfigurations` is true here. The vault's contents were never at
+        // risk (layer 2 still holds the PBKDF2 key), but the device-owner check was.
+        //
+        // The flag must therefore live exactly as long as the process: this activity's own field
+        // covers a foregrounded app, and the bundle covers only the teardown that keeps the process
+        // alive. If the guess is ever wrong the cost is one extra biometric prompt, not a skipped
+        // one.
+        if (isChangingConfigurations) {
+            outState.putBoolean(STATE_PASSWORD_SHOWN, passwordFragmentShown)
+        }
     }
 
     override fun onStart() {
@@ -128,10 +162,19 @@ class BiometricLockActivity : AppCompatActivity() {
     private fun swapInPasswordFragment() {
         if (passwordFragmentShown) return
         passwordFragmentShown = true
-        findViewById<View>(R.id.lockTitle).visibility = View.GONE
-        findViewById<View>(R.id.password_container).visibility = View.VISIBLE
+        revealPasswordContainer()
         supportFragmentManager.beginTransaction()
             .replace(R.id.password_container, AppPasswordFragment())
             .commit()
+    }
+
+    /** Layout-level half of showing layer 2, without the fragment transaction. */
+    private fun revealPasswordContainer() {
+        findViewById<View>(R.id.lockTitle).visibility = View.GONE
+        findViewById<View>(R.id.password_container).visibility = View.VISIBLE
+    }
+
+    private companion object {
+        const val STATE_PASSWORD_SHOWN = "password_fragment_shown"
     }
 }

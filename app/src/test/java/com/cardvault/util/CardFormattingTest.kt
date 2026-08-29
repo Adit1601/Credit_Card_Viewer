@@ -148,4 +148,38 @@ class CardFormattingTest {
             assertTrue("raw=[$raw]", CardFormatting.formatExpiry(raw).length <= 5)
         }
     }
+
+    // --- visibleDigitsOf ---------------------------------------------------------------------
+    // Regression: home-screen search matched the last 4 by taking the last four *characters* of
+    // the masked number, so any PAN length that is not a multiple of 4 handed the filter a
+    // grouping space and the card became unfindable by its last four digits.
+
+    @Test fun visibleDigits_areTheLastFourForEveryRealPanLength() {
+        // 16 (Visa/MC), 15 (Amex), 14 (Diners), 13 (old Visa) — all must yield exactly the last 4.
+        mapOf(
+            "4111111111111234" to "1234",
+            "378282246310005" to "0005",
+            "30569309025904" to "5904",
+            "4222222222222" to "2222"
+        ).forEach { (pan, expected) ->
+            val masked = CardFormatting.maskPan(pan)
+            assertEquals("pan=[$pan] masked=[$masked]", expected, CardFormatting.visibleDigitsOf(masked))
+        }
+    }
+
+    @Test fun visibleDigits_neverPicksUpAGroupingSpace() {
+        (1..19).forEach { len ->
+            val masked = CardFormatting.maskPan("9".repeat(len))
+            val visible = CardFormatting.visibleDigitsOf(masked)
+            assertTrue("len=$len masked=[$masked] visible=[$visible]", visible.all(Char::isDigit))
+            assertEquals("len=$len masked=[$masked]", minOf(len, 4), visible.length)
+        }
+    }
+
+    @Test fun visibleDigits_isEmptyWhenNothingWasDecrypted() {
+        // A row whose ciphertext could not be decrypted masks to bullets only; search must not
+        // treat that as a match for every query.
+        assertEquals("", CardFormatting.visibleDigitsOf(CardFormatting.maskPan("")))
+        assertEquals("", CardFormatting.visibleDigitsOf("•••• •••• •••• ••••"))
+    }
 }

@@ -1,5 +1,6 @@
 package com.cardvault.ui.scan
 
+import androidx.annotation.OptIn
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageProxy
 import com.cardvault.scan.OcrFrame
@@ -48,7 +49,11 @@ class MlKitTextSource : Closeable {
      * analysis executor keeps parsing off the main thread and is what makes
      * [CardScanViewModel]'s single-threaded accumulator contract true.
      */
-    @ExperimentalGetImage
+    // The opt-in stops here rather than propagating up through onFrame to the analyzer lambda:
+    // `proxy.image` on the next line is the only experimental API the scanner touches, and lint
+    // (UnsafeOptInUsageError) fails the build on the unmarked call site otherwise. androidx's
+    // @OptIn, not Kotlin's — ExperimentalGetImage is a Java @RequiresOptIn marker.
+    @OptIn(markerClass = [ExperimentalGetImage::class])
     fun process(proxy: ImageProxy, callbackExecutor: Executor, onResult: (OcrFrame?) -> Unit) {
         val media = proxy.image
         if (media == null || closed) {

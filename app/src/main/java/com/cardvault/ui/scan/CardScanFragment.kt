@@ -13,7 +13,6 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -28,6 +27,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import com.cardvault.MainActivity
 import com.cardvault.R
 import com.cardvault.scan.ScanCandidate
 import com.google.android.material.appbar.MaterialToolbar
@@ -131,6 +131,11 @@ class CardScanFragment : Fragment(R.layout.fragment_card_scan) {
     private val requestCameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
+        // Disarm first, and unconditionally: the launch may never have raised a dialog at all (an
+        // auto-denial under device policy, or the permission having been granted in between), in
+        // which case no onUserLeaveHint arrived to consume the flag and it would sit armed and
+        // swallow the user's next real Home press instead. See launchCameraPermissionRequest.
+        (activity as? MainActivity)?.endInAppExcursion()
         if (granted) startCamera() else showPermissionDenied()
     }
 
@@ -162,7 +167,7 @@ class CardScanFragment : Fragment(R.layout.fragment_card_scan) {
             // Only prompt on a genuinely fresh entry. After a rotation the fragment is rebuilt,
             // and re-launching the request here would re-prompt a user who has already declined —
             // or worse, loop against a "don't ask again" that returns denied instantly.
-            savedInstanceState == null -> requestCameraPermission.launch(Manifest.permission.CAMERA)
+            savedInstanceState == null -> launchCameraPermissionRequest()
             else -> showPermissionDenied()
         }
     }
@@ -355,7 +360,6 @@ class CardScanFragment : Fragment(R.layout.fragment_card_scan) {
 
     // ---- frame handling (analyzer thread) ----------------------------------------------------
 
-    @ExperimentalGetImage
     private fun onFrame(proxy: ImageProxy, source: MlKitTextSource, executor: Executor) {
         val now = System.currentTimeMillis()
         // Throttle. With KEEP_ONLY_LATEST the pipeline would otherwise run OCR as fast as the
@@ -567,6 +571,21 @@ class CardScanFragment : Fragment(R.layout.fragment_card_scan) {
         }
     }
 
+    /**
+     * The system permission dialog does not stop MainActivity, but it does trigger
+     * onUserLeaveHint — which is where "lock immediately on background" fires. Without this the
+     * vault locked the first time anyone opened the scanner, part-way through granting.
+     *
+     * The carve-out covers `onUserLeaveHint` only, never `onStop`. That is deliberate: it rests on
+     * the grant dialog leaving MainActivity started-but-paused, which is what Android does, and if
+     * some device stops it instead the vault locks and the user lands on the lock screen rather than
+     * back in the scanner. Inconvenient there, never unlocked-when-it-should-be-locked.
+     */
+    private fun launchCameraPermissionRequest() {
+        (activity as? MainActivity)?.beginInAppExcursion()
+        requestCameraPermission.launch(Manifest.permission.CAMERA)
+    }
+
     private fun showPermissionDenied() {
         // shouldShowRequestPermissionRationale is false after a permanent denial, and also false
         // before the first ask — but we only reach here having asked, so false means blocked.
@@ -575,7 +594,7 @@ class CardScanFragment : Fragment(R.layout.fragment_card_scan) {
                 R.string.scan_permission_title,
                 R.string.scan_permission_body,
                 R.string.scan_permission_action
-            ) { requestCameraPermission.launch(Manifest.permission.CAMERA) }
+            ) { launchCameraPermissionRequest() }
         } else {
             showFallback(
                 R.string.scan_permission_blocked_title,

@@ -6,6 +6,10 @@ A personal Android app for securely storing credit and debit card information.
 Fully offline, encrypted, and protected by two layers of security.
 Built natively in Kotlin for Android.
 
+**Companion documents:** `README.md` (user-facing guide), `WORKFLOWS.md` (every end-user workflow
+traced step by step, with its branches and failure states), `SCAN_FEATURE_PLAN.md` (scanning design
+record). See §18.
+
 ---
 
 ## 1. Security Model
@@ -27,8 +31,12 @@ Built natively in Kotlin for Android.
 
 ### 1.3 CVV Access
 - CVV is never displayed automatically.
-- To view or copy a CVV, the user must re-enter the in-app password, gated by `AppPasswordDialogFragment`.
+- To view or copy a CVV, the user must re-authenticate. The gate is two-step, tried in order:
+  1. **`CvvBiometricPrompt`** — a `BiometricPrompt` restricted to `BIOMETRIC_STRONG` only (no `DEVICE_CREDENTIAL`, so the device PIN cannot stand in for the vault's own factor). Used when `BiometricManager.canAuthenticate(BIOMETRIC_STRONG)` succeeds.
+  2. **`AppPasswordDialogFragment`** — in-app password entry. Used when no Class 3 biometric is available or enrolled, or when the user dismisses the biometric prompt.
+- Either success authorises the pending action (`PendingCvvAction.REVEAL` or `COPY`).
 - The re-auth cadence is configurable in Settings as **Per Action** (default — every CVV reveal or copy prompts) or **Per Session** (one successful CVV re-auth authorises CVV access for the rest of the current unlocked session, tracked by `SessionManager.cvvAuthorizedThisSession`).
+- The CVV is re-hidden and a revealed PAN is re-masked in `CardDetailFragment.onPause()`, so backgrounding or navigating away always resets both to their masked state.
 
 ### 1.4 General Security Constraints
 - `FLAG_SECURE` is set on all activities (`MainActivity`, `OnboardingActivity`, `BiometricLockActivity`) — no screenshots, no app-switcher preview.
@@ -36,7 +44,7 @@ Built natively in Kotlin for Android.
 - `CAMERA` is requested, and only for card scanning (§13). It is a runtime permission, asked for on first use of the scanner and never required to use the app. Frames are analysed in memory and never written anywhere; no capture use case is ever constructed. Declared `uses-feature ... required="false"` so a camera-less device can still install.
 - Clipboard is automatically cleared 30 seconds after any sensitive field is copied. The clear only fires if the clipboard content still matches what was written (avoids stomping on something the user copied afterward).
 - App locks immediately when sent to background (configurable in Settings, default: ON). On lock, the in-memory key handle is nulled and the Keystore alias is deleted.
-- All activities set `android:excludeFromRecents="true"`; `MainActivity` uses `android:launchMode="singleTask"`.
+- `MainActivity` uses `android:launchMode="singleTask"`. `android:excludeFromRecents` is deliberately **not** set: `FLAG_SECURE` already blanks the Recents thumbnail, and removing the task from the overview entirely is a UX regression with no additional security benefit. `OnboardingActivity` and `BiometricLockActivity` are `android:exported="false"`.
 - Backup is disabled three ways: `android:allowBackup="false"` in the manifest, plus `backup_rules.xml` and `data_extraction_rules.xml` that exclude the database, shared prefs, and files domain (belt-and-suspenders for forward API compatibility).
 
 ---
@@ -50,7 +58,8 @@ Built natively in Kotlin for Android.
 - The derived key is imported into the **Android Keystore** under alias `cardvault_master_key` on unlock (`KeyProtection`: `PURPOSE_ENCRYPT | PURPOSE_DECRYPT`, `BLOCK_MODE_GCM`, `ENCRYPTION_PADDING_NONE`, `setRandomizedEncryptionRequired(true)`); on lock the alias is deleted.
 - Each encrypted value stores its own random **IV** alongside the ciphertext, formatted as `Base64(iv[12] || ciphertext+tag)`. A fresh random IV per encryption is enforced by the Keystore.
 - Fields encrypted at rest: Card Number, Expiry Date, CVV.
-- Fields stored in plaintext: Nickname, Name on Card, Color, Network, Sort Order, Created At.
+- Fields stored in plaintext: Nickname, Name on Card, Color, Network, **Card Type**, **Issuing Bank**, Sort Order, Created At.
+- `issuingBank` is plaintext by design: the bank filter chips and the scanner's bank vocabulary are both built from it, and both must work without the vault being unlocked. See §16.1 for the disclosure this accepts.
 
 ### 2.2 Storage layout
 
@@ -76,6 +85,8 @@ Built natively in Kotlin for Android.
 | encryptedCvv | String | Yes |
 | colorHex | String | No |
 | cardNetwork | Enum (VISA, MASTERCARD, AMEX, RUPAY, DISCOVER, DINERS, UNKNOWN) | No |
+| cardType | Enum (DEBIT, CREDIT, PREPAID, UNKNOWN) — added in schema v2 | No |
+| issuingBank | String (empty = unset) — added in schema v3 | No |
 | sortOrder | Int | No |
 | createdAt | Long (epoch ms) | No |
 
@@ -137,31 +148,43 @@ No manual selection is required.
 - When 30 cards are stored, the Add Card button is disabled and a message is shown.
 
 ### 4.2 Add Card
-- Accessed via a button in the **top-left corner** of the main screen toolbar.
+- Accessed via the toolbar's navigation icon in the **top-left corner** of the main screen (`setNavigationOnClickListener`, not a separate FAB).
+- Tapping it opens the **add-choice bottom sheet** (`dialog_add_card_choice.xml`) offering **Scan card** or **Enter manually**. The 30-card cap is checked against the *unfiltered* card list before the sheet is shown.
 - Form fields:
   - **Nickname** — user-defined label (e.g. "HDFC Rewards Platinum"). Required.
   - **Name on Card** — as printed on the card. Required.
   - **Card Number** — 13–19 digits. Auto-formatted with spaces every 4 digits. Required.
   - **Expiry Date** — auto-formatted as MM/YY. Required.
   - **CVV** — 3–4 digits, `inputType="numberPassword"`. Required.
-  - **Card Color** — user picks from a palette of ~12 colors. Used as background of card tile.
+  - **Issuing Bank** — optional `MaterialAutoCompleteTextView`. The adapter is seeded with `BankSuggestions.combined(emptyList())` (18 built-in banks) and then re-seeded with those 18 plus every distinct non-empty `issuingBank` already in the vault. Free text is accepted; the value is trimmed on save.
+  - **Card Type** — optional `MaterialButtonToggleGroup`: **Debit** / **Credit** / **Prepaid**, defaulting to `CardType.UNKNOWN`.
+  - **Card Color** — user picks from a palette of exactly **12** colors (`ColorPalette`, default `#2A3140`). Used as background of card tile.
 - Network logo is auto-detected and shown live on the card preview as the user types.
 - `importantForAutofill="no"` is set on the PAN and CVV inputs to prevent autofill frameworks from persisting card values.
-- On Save: card number, expiry, and CVV are encrypted before being stored in Room.
+- The PAN field carries a **camera end-icon** (`scan_cd_pan_scan`) that opens the scanner directly from the form.
+- Validation order on Save: nickname non-blank → name non-blank → PAN 13–19 digits → expiry shape valid (month 01–12) → expiry not in the past → CVV 3–4 digits → Luhn acknowledgement. The first failure focuses its field and stops.
+- **Luhn is a soft gate.** A PAN that fails the mod-10 checksum raises an amber `helperText` warning on focus loss (never `error`, so it cannot collide with the hard 13–19 digit block) and, on Save, a *"Save anyway" / "Let me check"* confirmation dialog. Acknowledging once (`luhnAcknowledged`) lets the save through; editing the PAN clears the acknowledgement.
+- Backing out of a dirty form raises an unsaved-changes confirmation dialog.
+- Form state that the framework does not restore — `dirty`, `selectedColor`, `detectedNetwork`, `selectedCardType`, `initialApplied`, `scanApplied` — is held in `AddEditCardViewModel` so a rotation does not reset it or re-run `applyInitial` over the user's input.
+- On Save: card number, expiry, and CVV are encrypted before being stored in Room. The encrypt-then-persist step runs inside `SessionManager.withWriteLock` so it cannot straddle a password rotation and write ciphertext under a doomed key.
 - The form can optionally be pre-filled by scanning the physical card (§13). Scanning never fills the CVV, and every scanned value remains editable.
 
 ### 4.3 Edit Card
 - Any saved card can be edited (all fields).
-- Accessed via a long-press on the card tile or an edit icon on the card detail screen.
-- On Save: re-encrypts updated sensitive fields.
+- Two entry points: **Edit** in the long-press bottom sheet on the main screen, and the edit icon on the card detail screen.
+- The edit path re-checks the row by id at save time; if it was deleted from another path since load, the save reports *"Card no longer exists"* rather than silently succeeding.
+- On Save: re-encrypts updated sensitive fields. `sortOrder` and `createdAt` are preserved.
 
 ### 4.4 Delete Card
-- Cards can be deleted from the card detail screen.
-- A confirmation dialog is shown before deletion.
+- Two entry points: the delete action on the card detail screen, and **Delete** in the main screen's long-press bottom sheet.
+- A single confirmation dialog is shown before deletion from either entry point.
 
 ### 4.5 Reorder Cards
-- Cards on the main screen can be reordered via **drag-and-drop**.
-- Sort order is persisted to the database.
+- Entered from **Reorder** in the main screen's long-press bottom sheet, not by long-pressing into a drag.
+- Reorder mode replaces the toolbar's Add icon with nothing and its search/settings items with a single **Done**, and hides the bank-filter chip row.
+- Drags are **handle-initiated only** (`isLongPressDragEnabled() = false`; the tile's drag handle claims `ACTION_DOWN` and calls `startDrag`). Long-pressing the tile body in reorder mode does nothing.
+- Entering reorder mode is **blocked** while a search query is active (`home_reorder_blocked_by_search`) or a bank filter is selected (`home_reorder_blocked_by_filter`), so the drag always operates on the complete list. See §17.3 assumption 14.
+- Sort order is persisted on drop (`clearView` → `applyReorder(adapter.currentIds())`).
 
 ---
 
@@ -173,21 +196,27 @@ No manual selection is required.
 - Each tile displays:
   - Nickname (top-left)
   - Card network logo (top-right)
-  - Card number — **masked** by default (`**** **** **** 1234`)
-  - Name on Card
+  - Card number — **masked** by default (`•••• •••• •••• 1234`)
+  - Name on Card, uppercased
   - Expiry Date
-  - Card background in the user-selected color
-- A **Bank filter** `ChipGroup` above the list restricts the visible cards to a chosen bank (derived from nickname prefix); "All" is always selected by default.
-- A toolbar `SearchView` filters the list by nickname / name substring, composed with the bank filter via a `MediatorLiveData`.
+  - **Card-type badge** (Debit / Credit / Prepaid) — hidden when `cardType == CardType.UNKNOWN`
+  - **"Expires soon" badge** — shown when `ExpiryUtil.isExpiringSoon(expiry)` is true, i.e. the expiry is at or before two months from today (this window is inclusive of already-expired cards — see LOW-2)
+  - Card background in the user-selected color (falling back to `card_slate` if the stored hex fails to parse)
+  - A drag handle, visible only in reorder mode
+- The toolbar subtitle shows the stored count as `home_count_subtitle` — `"%1$d / 30"` — computed from the **unfiltered** list.
+- A **Bank filter** `ChipGroup` above the list restricts the visible cards to a chosen bank. The chips are built from the distinct non-empty **`issuingBank`** column values actually present in the vault (not from the nickname), plus an **All** chip (always default) and an **Unknown** chip when at least one card has an empty bank. Rebuilding the strip preserves the active selection and falls back to **All** if that bank no longer exists.
+- A toolbar `SearchView` filters the list by **nickname substring or last-4-digits substring** (`CardViewModel.matches`), case-insensitive. Name-on-card is **not** searched (§16.1). Query and bank filter are composed via `MediatorLiveData`.
+- Decryption of the visible list is per-emission and cancellable: `CardViewModel` cancels the in-flight decrypt job on every new Room emission.
 
 ### 5.2 Interactions on Main Screen
 - **Tap card** → open Card Detail screen.
-- **Long-press card** → enter drag-to-reorder mode, or show Edit/Delete options.
-- **Add Card button** (top-left toolbar) → open Add Card screen.
-- **Reorder mode**: menu toggle turns the toolbar into a done-only affordance; `ItemTouchHelper` supplies drag handles and persists the new `sortOrder` on drop.
+- **Long-press card** → open the `dialog_card_actions` bottom sheet with **Reorder cards**, **Edit card** and **Delete card**. Long-press does *not* itself start a drag.
+- **Add Card button** (the toolbar's top-left navigation icon) → add-choice bottom sheet → Scan or Manual (§4.2).
+- **Reorder mode**: the toolbar becomes a done-only affordance; `ItemTouchHelper` drags are started from the per-tile handle and the new `sortOrder` is persisted on drop. See §4.5 for the blocked states.
 
 ### 5.3 Empty State
-- When no cards are added, a friendly illustration and "Add your first card" message is shown.
+- When no cards are stored at all: `home_empty_title` ("No cards yet") + `home_empty_body` ("Add your first card to get started.").
+- When cards exist but the active search / filter matches none: `home_search_no_matches` ("No cards match your search.") — a distinct state, so the user is not told the vault is empty when it is not.
 
 ---
 
@@ -205,13 +234,15 @@ No manual selection is required.
 | Name on Card | Fully visible | — | Tap copy icon |
 | Card Number | Masked (`**** **** **** 1234`) | Tap to toggle reveal/hide | Tap copy icon (copies full number) |
 | Expiry Date | Fully visible | — | Tap copy icon |
-| CVV | Hidden (`***`) | Tap "Show CVV" → enter in-app password | Tap copy icon → enter in-app password |
+| CVV | Hidden (`***`) | Tap "Show CVV" → biometric prompt, password dialog as fallback | Tap copy icon → same re-auth |
 
 ### 6.3 CVV Reveal Flow
-1. User taps "Show CVV" button.
-2. App presents in-app password entry dialog (`AppPasswordDialogFragment`).
-3. On correct password → CVV is revealed in plain text.
-4. CVV is hidden again when the user leaves the screen or the app is backgrounded.
+1. User taps "Show CVV" (or the CVV copy icon). The requested action is recorded as `PendingCvvAction.REVEAL` / `COPY`.
+2. If `cvv_reauth_mode` is **Per Session** and `SessionManager.cvvAuthorizedThisSession` is already true, the action runs immediately with no prompt. Otherwise:
+3. `CvvBiometricPrompt.request(...)` presents a `BIOMETRIC_STRONG`-only prompt (no device-credential fallback).
+4. If Class 3 biometrics are unavailable / unenrolled, or the prompt is dismissed, the app falls through to `AppPasswordDialogFragment` for in-app password entry.
+5. On success from either route the pending action runs — reveal in plain text, or copy via `ClipboardUtil.copySensitive`. In **Per Session** mode `cvvAuthorizedThisSession` is set.
+6. `CardDetailFragment.onPause()` re-hides the CVV **and** re-masks a revealed PAN, and `renderState()` resets the reveal toggle in lock-step, so returning to the screen never shows a stale revealed value.
 
 ### 6.4 Clipboard Behavior
 - Copying any sensitive field (card number, CVV) triggers a silent notification: "Clipboard will be cleared in 30 seconds."
@@ -257,7 +288,7 @@ Triggered only on first launch (`onboarding_done` is false in `SecurePreferences
 | Architecture | MVVM with Repository pattern |
 | UI Framework | XML Views with ViewBinding + Material3 (no Jetpack Compose) |
 | Theme | Dark-only (`Theme.Material3.Dark.NoActionBar`) |
-| Database | Room v4 (SQLite) via KSP (not kapt); two entities (`CardEntity`, `MetadataEntry`), one explicit migration (`MIGRATION_3_4`), no destructive fallback |
+| Database | Room v4 (SQLite) via KSP (not kapt); two entities (`CardEntity`, `MetadataEntry`); **three** explicit migrations — `MIGRATION_1_2` (adds `cardType`), `MIGRATION_2_3` (adds `issuingBank`), `MIGRATION_3_4` (creates the `metadata` table) — and no destructive fallback |
 | Encryption | AES-256-GCM + PBKDF2 via Android Keystore; canary-based password verification; atomic password rotation via Room `withTransaction` |
 | Biometrics | AndroidX BiometricPrompt API |
 | Network | None — zero network permissions |
@@ -314,12 +345,12 @@ aapt2 dump permissions app/build/outputs/apk/release/app-arm64-v8a-release.apk
   - `androidx.recyclerview:recyclerview`, `androidx.constraintlayout:constraintlayout`
   - (No Gson — nothing serializes to JSON.)
 - Set `FLAG_SECURE` in every Activity (`MainActivity`, `OnboardingActivity`, `BiometricLockActivity`).
-- Configure `AndroidManifest.xml`: biometric permissions only, `allowBackup="false"`, `excludeFromRecents="true"` on every activity, `MainActivity` uses `launchMode="singleTask"`, `data_extraction_rules.xml` + `backup_rules.xml` referenced from the `<application>` element.
+- Configure `AndroidManifest.xml`: `USE_BIOMETRIC` / `USE_FINGERPRINT` / `CAMERA` only, `INTERNET` and `ACCESS_NETWORK_STATE` stripped with `tools:node="remove"`, `allowBackup="false"`, `supportsRtl="false"`, `MainActivity` uses `launchMode="singleTask"`, `OnboardingActivity` and `BiometricLockActivity` `exported="false"`, `data_extraction_rules.xml` + `backup_rules.xml` referenced from the `<application>` element. `excludeFromRecents` is not set (§1.4).
 
 ### Step 2 — Data Layer
 - Define `CardEntity` Room entity with all fields listed in Section 2.3, plus a `Converters` `@TypeConverter` for the `CardNetwork` enum (persisted as the enum name).
 - Define `MetadataEntry(@PrimaryKey key: String, value: String)` and `MetadataDao(get(key), put(entry))` for the `metadata` table.
-- Create `AppDatabase` singleton (Room) at `version = 4`, entities `[CardEntity, MetadataEntry]`, with `Converters` registered. Register `MIGRATION_3_4` that creates the `metadata` table (`key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL`). Do not allow destructive migration.
+- Create `AppDatabase` singleton (Room) at `version = 4`, entities `[CardEntity, MetadataEntry]`, with `Converters` registered. Register all three migrations — `MIGRATION_1_2` (`ALTER TABLE cards ADD COLUMN cardType`), `MIGRATION_2_3` (`ALTER TABLE cards ADD COLUMN issuingBank`), `MIGRATION_3_4` (creates the `metadata` table, `key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL`). Do not allow destructive migration.
 - Write `CardRepository` wrapping `CardDao`; write `VaultMetadataRepository` (see below) wrapping `MetadataDao`.
 - Write `CryptoManager` (object):
   - `randomSalt(): ByteArray` — 16 random bytes from `SecureRandom`.
@@ -376,7 +407,18 @@ aapt2 dump permissions app/build/outputs/apk/release/app-arm64-v8a-release.apk
   - `cvvAuthorizedThisSession: Boolean` — supports `PER_SESSION` CVV re-auth mode.
   - `setMasterKey(key)` / `getMasterKey()` / `requireKey()` / `isUnlocked()`.
   - `lock()` — nulls the in-memory handle, calls `CryptoManager.removeMasterKey()` to delete the Keystore alias, resets `cvvAuthorizedThisSession`.
-- `MainActivity.onStop()`: call `SessionManager.lock()` if lock-on-background is enabled.
+- `MainActivity.onUserLeaveHint()` **and** `onStop()`: call `SessionManager.lock()` if
+  lock-on-background is enabled. `onUserLeaveHint` fires the moment the user leaves (Home, Recents,
+  following a link out of the app) and closes the window where Android has not yet stopped the
+  activity; `onStop` covers everything that hook does not see, finishing included. `onStop` returns
+  early on `isChangingConfigurations` only — a rotation is not backgrounding.
+- `MainActivity.beginInAppExcursion()`: a one-shot flag that suppresses the *next*
+  `onUserLeaveHint` lock. The hook also fires when the app itself starts an activity, and the
+  CAMERA permission dialog does not stop `MainActivity` — so without this, opening the scanner for
+  the first time locked the vault part-way through granting. Only `CardScanFragment`'s permission
+  request sets it; "Open settings" after a permanent denial deliberately does not, so that route
+  still locks. Fail-secure by construction: a forgotten call locks, a stuck flag would not. Leaving
+  for real from on top of such a dialog still stops the activity, so `onStop` catches it.
 - `MainActivity.onResume()`: if the session is not unlocked, relaunch `BiometricLockActivity`.
 
 ### Step 8 — Main Screen (Card List)
@@ -523,17 +565,25 @@ app/src/main/res/
     ├── backup_rules.xml
     └── data_extraction_rules.xml
 
-app/src/test/java/com/cardvault/
-└── security/
-    └── CardNetworkDetectorTest.kt           # BIN prefix coverage incl. Discover/RuPay boundary
+app/src/test/java/com/cardvault/          # pure-JVM JUnit4 only — no Robolectric, no instrumented tests
+├── scan/
+│   ├── BankMatcherTest.kt                   # exact / containment / Levenshtein; HDFC-vs-HSBC guard
+│   ├── CardScanParserTest.kt                # scoring precedence, CVV suppression, expiry selection
+│   ├── NumericNormalizerTest.kt             # digit substitutions applied only to digit-dominated tokens
+│   ├── ScanAccumulatorTest.kt               # 3-vote locking, per-field independence, Luhn re-check
+│   ├── ScanFixtures.kt                      # shared synthetic OcrFrame fixtures (not a test class)
+│   └── ScanModelsTest.kt                    # OcrLine/OcrFrame/ScanCandidate invariants
+├── security/
+│   └── CardNetworkDetectorTest.kt           # BIN prefix coverage incl. Discover/RuPay boundary
+└── util/
+    ├── CardFormattingTest.kt                # PAN grouping, masking, expiry formatting
+    ├── ExpiryUtilTest.kt                    # isExpiringSoon window boundaries
+    └── LuhnTest.kt                          # mod-10 checksum + length bounds
 ```
 
----
-
-*Document version: 1.3 — Last updated: 2026-08-29 (deep review: full feature inventory, bug catalogue, limitations and assumptions added in §14–§17).*
-*Notable changes from v1.2: §14 Complete Feature Inventory added; §15 Bug Catalogue added; §16 Limitations added; §17 Assumptions added.*
-*Notable changes from v1.1 → v1.2: Room schema bumped to v4 with a new `metadata` table for salt + canary; password change is now atomic via a single `db.withTransaction` that spans card ciphertext + salt + canary; canary is generated from the raw PBKDF2 key rather than the Keystore-wrapped handle (breaks the Keystore ordering dependency); `SecurePreferences` no longer stores crypto material and exposes only seed accessors for the v3→v4 upgrade; new files `MetadataEntry.kt`, `MetadataDao.kt`, `VaultMetadataRepository.kt`; `MIGRATION_3_4` shipped; explicit lazy prefs→DB seed documented.*
-*Changes from v1.0 → v1.1: password verification is canary-based rather than SHA-256 hash comparison; Room compiler runs via KSP not kapt; Gson dropped (unused); Settings gains a CVV Re-Auth Mode toggle; Reset flow uses two chained confirmations; file structure updated to match `com.cardvault` package layout.*
+10 files, ~1 660 lines. Everything under test is pure or near-pure: the scan pipeline, the network
+detector, and the formatting/checksum utilities. `CryptoManager`, the ViewModels, the repositories
+and every Fragment are untested — they need either the Android framework or the Keystore. See §16.5.
 
 ---
 
@@ -653,7 +703,7 @@ exists in the codebase as of v1.3.
 | Atomic password rotation | `db.withTransaction { updateAll(rewrapped); putSaltAndCanary(...) }` — all-or-nothing. |
 | Session manager with mutex | `SessionManager.withWriteLock` (coroutine `Mutex`) serialises save operations against password rotation. |
 | FLAG_SECURE on all activities | `MainActivity`, `OnboardingActivity`, `BiometricLockActivity` — no screenshots, no Recents thumbnail. |
-| Lock on background | `MainActivity.onStop()` calls `SessionManager.lock()` when `lock_on_background = true` (default). |
+| Lock on background | `MainActivity.onUserLeaveHint()` and `onStop()` call `SessionManager.lock()` when `lock_on_background = true` (default). `onStop` skips only a configuration change, so rotation does not lock but backing out of the app does. `onUserLeaveHint` skips exactly one hop when the app itself raises the CAMERA permission dialog (`beginInAppExcursion()`); a real departure from that dialog still stops the activity and locks. |
 | Clipboard auto-clear | 30-second `Handler.postDelayed`; only clears if clipboard still holds what was written. |
 | No network permissions | `INTERNET` and `ACCESS_NETWORK_STATE` stripped with `tools:node="remove"`. |
 | No backup | `allowBackup="false"` + `backup_rules.xml` + `data_extraction_rules.xml` (all three domains excluded). |
@@ -828,15 +878,7 @@ These strings bypass the `strings.xml` localisation pipeline. If the app is ever
 **Severity:** Low  **Effort:** Easy  
 **File:** `ui/detail/CardDetailState` (defined in `CardDetailViewModel.kt:70`)
 
-`CardDetailState` does not include `cardType` or `issuingBank`, so the detail screen cannot show those fields even though they exist on the card. The detail layout (`fragment_card_detail.xml`) may or may not have rows for these. If the layout has no rows, this is intentional and fine; if it does, those rows are never populated. (Verify against the layout XML.)
-
----
-
-#### LOW-7 — `REQUIREMENTS.md` §1.4 states `android:excludeFromRecents="true"` on all activities, but the manifest does not set it
-**Severity:** Low  **Effort:** Easy  
-**File:** `AndroidManifest.xml`, `REQUIREMENTS.md:39`
-
-The manifest has no `android:excludeFromRecents="true"` attribute on any activity. `FLAG_SECURE` prevents screenshots/thumbnails in Recents, so there is no security hole — but the requirement is mis-stated. Either add the attribute or update §1.4 to say only `FLAG_SECURE` is used (the stronger approach, since `excludeFromRecents` also removes the task from the overview, which is a UX concern not a security one).
+`CardDetailState` does not include `cardType` or `issuingBank`, so the detail screen cannot show those fields even though they exist on the card. **Verified against the layout:** `fragment_card_detail.xml` has rows for nickname, name, number, expiry, CVV and network only — there are no rows for card type or issuing bank, so nothing is left unpopulated. The consequence is an information gap rather than a broken view: both values appear on the home tile (as the type badge and via the bank filter) but the detail screen never shows them, and editing the card is the only way to read them back. Fix, if wanted: add both to `CardDetailState` and add two rows to the layout.
 
 ---
 
@@ -853,6 +895,17 @@ The manifest has no `android:excludeFromRecents="true"` attribute on any activit
 | BUG-F7 | `CardType.UNKNOWN` had `0` (invalid `@StringRes`) | v1.1 |
 | BUG-F8 | `wireCardTypePicker` double-fired (used `buttonId` param, not `group.checkedButtonId`) | v1.1 |
 | BUG-F9 | `AppPasswordDialogFragment` `deliver(false)` double-fire from `setOnCancelListener` | v1.1 |
+| BUG-F10 | §1.4 claimed `android:excludeFromRecents="true"` on every activity; the manifest never set it (was LOW-7 — resolved by correcting the requirement, not the manifest) | v1.4 |
+| BUG-F11 | §5.1 / §5.2 described the bank filter as derived from the nickname prefix and search as matching name-on-card; both were wrong (`issuingBank` column; nickname or last-4) | v1.4 |
+| BUG-F12 | **CRITICAL-1** — `MainActivity.onStop()` guarded on `isFinishing`, which is false during a configuration change, so every rotation ran `SessionManager.lock()` and ejected the user to `BiometricLockActivity`, discarding in-flight form state. Now guards on `isChangingConfigurations` | v1.5 |
+| BUG-F13 | The same `isFinishing` guard meant backing out of the vault **skipped** the lock entirely: the key stayed in memory and the next launch walked straight past both auth layers. Removing the guard closes it — finishing is the app going away and must lock | v1.5 |
+| BUG-F14 | "Lock immediately on background" did not lock at all for a sub-second round trip: Android does not stop the activity the instant Home is pressed, so returning inside that window went onPause → onResume without ever stopping. Measured 1 s away = unlocked, 2 s = locked. `onUserLeaveHint()` now drops the key at the moment the user leaves, with a one-shot `beginInAppExcursion()` carve-out for the app's own CAMERA permission dialog (which fires the hook without stopping the activity, and so locked the vault mid-grant on the first scan). The permission callback calls `endInAppExcursion()` unconditionally, so a launch that never raises a dialog — auto-denied under device policy, or granted in between — cannot leave the flag armed to swallow an unrelated Home press later | v1.5 |
+| BUG-F15 | `CardViewModel.matches()` took the last four *characters* of the masked number, which is a grouping space plus three characters whenever the PAN length is not a multiple of 4 — 13-, 14- and 15-digit cards could not be found by their last four digits at all. Replaced with `CardFormatting.visibleDigitsOf()`, covered by three new unit tests | v1.5 |
+| BUG-F16 | The final Reset-app dialog read "Type your password to confirm on the next step", but `SettingsFragment` calls `performReset()` straight from that button — there is no next step and no password check. Copy now says the wipe happens on confirm and that nothing follows it | v1.5 |
+| BUG-F17 | `CardDetailFragment` left the reveal button reading "Show CVV" over an already-revealed CVV, and tapping it re-ran the whole biometric/password prompt to no visible effect. It is now a real toggle: reveal prompts, **Hide CVV** does not | v1.5 |
+| BUG-F18 | **MEDIUM-1** — `BiometricLockActivity.passwordFragmentShown` was a plain field, so a rotation on the password screen reset it to `false` while the `FragmentManager` restored `AppPasswordFragment`: `onStart` re-fired the biometric prompt (or the no-screen-lock warning) over the screen the user was typing into, and `setContentView` had already put `password_container` back to the `gone` its layout declares, hiding the restored fragment. Now saved in `onSaveInstanceState` and restored in `onCreate`, which also re-applies the visibilities via `revealPasswordContainer()`. **Guarded on `isChangingConfigurations`**, because a non-null bundle does not mean "the screen rotated": the system also hands one back after killing the process, and resuming the task from Recents then restored the flag as `true` on a genuinely cold launch — `onStart` early-returned and layer 1 was skipped entirely, opening straight onto the password screen with no biometric or device-credential check. Reproduced on a Pixel 9 Pro emulator with `am kill` (new pid, `onCreate saved=true flagInBundle=true`) and confirmed fixed the same way. Layer 2 always still held, so the vault's contents were never exposed | v1.6 |
+| BUG-F19 | **MEDIUM-2** — `./gradlew lintDebug` failed with one `UnsafeOptInUsageError`: `CardScanFragment.onFrame` carried the `@ExperimentalGetImage` marker, which propagates the opt-in requirement instead of consuming it, leaving the analyzer lambda at `CardScanFragment.kt:303` an unmarked call site. The marker now sits where the experimental API actually is — `androidx.annotation.OptIn(markerClass = [ExperimentalGetImage::class])` on `MlKitTextSource.process`, the only place `ImageProxy.image` is read. Lint is clean of errors (124 warnings remain) | v1.6 |
+| BUG-F20 | **MEDIUM-3** — at least one bundled `.so` was not 16 KB-aligned, raising `PageSizeMismatchDialog` at launch on Android 15+ and 16 KB emulator images and blocking future Play uploads. The offender was **CameraX**, not ML Kit: `camera-core` 1.3.4's `libimage_processing_util_jni.so` had `p_align = 0x1000`, while `libmlkit_google_ocr_pipeline.so` was already `0x4000`. Fixed by moving CameraX to 1.4.2 (every artifact declares `minCompileSdk = 34`, so no SDK bump). Verified on debug and all three release APKs: every **arm64-v8a** `.so` now has `p_align = 0x4000` and `zipalign -c -P 16` reports success. The `armeabi-v7a` copy of `libmlkit_google_ocr_pipeline.so` is still `0x1000` and stays that way — ML Kit ships no 16 KB-aligned 32-bit build, and the requirement is scoped to 64-bit devices (Play's gate, and Google's `check_elf_alignment.sh`, only look at `arm64-v8a`/`x86_64`; the deadline for updates is 1 Feb 2027) | v1.6 |
 
 ---
 
@@ -867,7 +920,7 @@ These are known, intentional constraints of the current implementation, not bugs
 - **No export / import.** Card data cannot be exported to a file or imported from another vault or password manager. Data loss on factory reset or uninstall is permanent.
 - **No cloud backup.** Backup is explicitly disabled. There is no sync to Google Drive, Samsung Cloud, or any other cloud service.
 - **No iCloud / cross-device.** Android-only app; no data portability to iOS or desktop.
-- **No search by name-on-card.** `CardViewModel.matches()` searches nickname and last 4 digits only; the name-on-card field is not searched.
+- **No search by name-on-card.** `CardViewModel.matches()` searches nickname and last 4 digits only; the name-on-card field is not searched. (The last-4 half works for every accepted PAN length, 13–19 digits — see BUG-F15.)
 - **No search by network or card type.** No filter chip for Visa/Mastercard/etc. or Debit/Credit/Prepaid.
 - **`issuingBank` is plaintext.** The bank name field is stored unencrypted in Room (by design — it drives the filter chips without decryption). An attacker with access to the DB file can read bank names and nicknames without the password.
 
@@ -903,7 +956,7 @@ These are known, intentional constraints of the current implementation, not bugs
 
 - **No ViewBinding.** The project was specified to use ViewBinding (`buildFeatures { viewBinding = true }`) but all fragments use `findViewById`. This is a maintainability issue, not a runtime bug.
 - **`CardVaultApplication.instance` is accessible.** The Application exposes a static `instance` reference. Nothing currently uses it unsafely, but it is a global static that could be misused.
-- **No unit tests for most logic.** Only `CardNetworkDetectorTest` exists. `CryptoManager`, `ExpiryUtil`, `Luhn`, `CardFormatting`, `BankMatcher`, `CardScanParser`, `ScanAccumulator`, and `NumericNormalizer` have no tests, despite being pure / near-pure functions that are straightforwardly testable.
+- **Test coverage stops at the pure layer.** The scan pipeline (`CardScanParser`, `ScanAccumulator`, `BankMatcher`, `NumericNormalizer`, the OCR models), `CardNetworkDetector`, `Luhn`, `CardFormatting` and `ExpiryUtil` are covered by 10 pure-JVM JUnit4 files (§12). **`CryptoManager` is not tested**, because it depends on `android.util.Base64` and the Android Keystore; testing it would need Robolectric or an instrumented test, or a swap to `java.util.Base64` plus an injectable key provider. Neither Robolectric nor any instrumented test exists, so no ViewModel, repository, DAO or Fragment behaviour is covered. There is no CI pipeline.
 - **`biometric:1.1.0` is old.** The `androidx.biometric:biometric:1.1.0` dependency was released in 2021; `1.2.0-alpha05` and later offer additional features. No functional gaps affect this app's use, but the library is due an update.
 - **`security-crypto:1.1.0-alpha06` is an alpha.** `androidx.security:security-crypto` has been in alpha for several years. The API is stable in practice, but the `alpha` designation is a maintenance flag.
 - **`exportSchema = false` on `AppDatabase`.** Room schema export is disabled. This makes schema diffing and migration testing harder. Recommended for production apps to enable and commit the schema JSONs to version control.
@@ -961,3 +1014,53 @@ These are design decisions made where requirements were ambiguous, or constraint
 19. **`SessionManager` as a process-singleton is safe.** The entire app runs in a single process. If Android ever split the app across processes (e.g. a future multi-process manifest attribute), `SessionManager`'s in-memory key would not be shared. No such split is present.
 
 20. **ML Kit `TextRecognizerOptions.DEFAULT_OPTIONS` is the bundled Latin recogniser.** The `com.google.mlkit:text-recognition:16.0.1` dependency ships with a bundled model. No runtime download occurs. If this changes in a future ML Kit version, the no-network guarantee would need re-verification.
+
+---
+
+## 18. Related Documents
+
+| Document | Contents |
+|---|---|
+| `README.md` | User-facing guide: what the app is, how to use each screen, known issues and limitations in plain language, system requirements, build instructions. |
+| `WORKFLOWS.md` | Every end-user workflow as a step-by-step trace — entry point, steps, branches, failure states and where each one lands. Written from the code, and the place to look when asking "what does the user actually see if X happens?". |
+| `SCAN_FEATURE_PLAN.md` | The design record for card scanning: the CVV-suppression argument, the vote accumulator, and the build-time invariants that enforce them. |
+
+---
+
+*Document version: 1.6 — Last updated: 2026-08-29 (the three §15.1 Medium bugs resolved; six earlier fixes from a full WORKFLOWS.md §1–§10 run on a Pixel 9 Pro emulator, API 37).*
+
+*Notable changes from v1.3:*
+- *§1.3 / §6.2 / §6.3 — the CVV gate is biometric-first (`CvvBiometricPrompt`, `BIOMETRIC_STRONG` only) with the password dialog as fallback; previously documented as password-only, contradicting §14.1.*
+- *§1.4 / §11 Step 1 — the `excludeFromRecents` claim removed (was LOW-7).*
+- *§2.1 / §2.3 — `cardType` and `issuingBank` added to the plaintext-field list and the entity table.*
+- *§4.2–§4.5 — add-choice sheet, issuing-bank autocomplete, card-type toggle, exact 12-colour palette, full validation order, the soft Luhn gate, both edit and both delete entry points, and the handle-only / filter-blocked reorder rules.*
+- *§5.1 / §5.2 — bank filter corrected to the `issuingBank` column, search corrected to nickname-or-last-4, tile badges and the `n / 30` subtitle documented, long-press corrected to the actions bottom sheet.*
+- *§5.3 — the no-matches state distinguished from the empty vault.*
+- *§9 / §11 Step 2 — three explicit Room migrations, not one.*
+- *§12 — the real 10-file test tree.*
+- *§15.1 — CRITICAL-1 (rotation locks the vault) and MEDIUM-1…3 added; LOW-7 retired to §15.2.*
+- *§16.5 — test-coverage limitation rewritten to say what is actually untested.*
+- *§18 added: cross-reference to `WORKFLOWS.md`.*
+
+*Changes from v1.5 → v1.6: the three Medium bugs are fixed and §15.1 now holds only LOW-1…LOW-6 —
+BUG-F18 `passwordFragmentShown` survives a rotation (and takes the container visibility with it),
+BUG-F19 `lintDebug` passes with the opt-in consumed at `MlKitTextSource.process` rather than
+propagated, BUG-F20 CameraX 1.4.2 replaces 1.3.4 so every 64-bit `.so` is 16 KB-aligned (the 32-bit
+slice is out of scope of the requirement and unchanged).
+A code review of the working tree caught the `isChangingConfigurations` hole in BUG-F18 before it
+was committed; the process-death journey is now part of the verification below.
+Verification: `p_align = 0x4000` on all three arm64 libraries and `zipalign -c -P 16` reports success across debug and all three release APKs, lint
+0 errors, 202/202 unit tests, and on a Pixel 9 Pro emulator a rotation on the password screen keeps
+the typed password with no re-prompt, `am kill` plus a Recents resume brings layer 1 back, the
+scanner still delivers a full read on CameraX 1.4.2, and the four lock scenarios (rotation no lock /
+BACK locks / Home + 0.3 s locks / permission grant returns to the scanner unlocked) all hold.*
+
+*Changes from v1.4 → v1.5: §15.1 CRITICAL-1 retired to §15.2 as BUG-F12 (fixed); BUG-F13…F17 added for
+five bugs found by running every workflow in `WORKFLOWS.md` against a Pixel 9 Pro emulator — the
+BACK-exit lock bypass, the sub-second "lock immediately" window, last-4 search on 13/14/15-digit PANs,
+the Reset-app dialog promising a password step that does not exist, and the one-way "Show CVV" button.
+Three unit tests were added for `CardFormatting.visibleDigitsOf` (202 tests total, all passing).
+§16.1's search limitation now states that last-4 covers every accepted PAN length.*
+
+*Notable changes from v1.1 → v1.2: Room schema bumped to v4 with a new `metadata` table for salt + canary; password change is now atomic via a single `db.withTransaction` that spans card ciphertext + salt + canary; canary is generated from the raw PBKDF2 key rather than the Keystore-wrapped handle (breaks the Keystore ordering dependency); `SecurePreferences` no longer stores crypto material and exposes only seed accessors for the v3→v4 upgrade; new files `MetadataEntry.kt`, `MetadataDao.kt`, `VaultMetadataRepository.kt`; `MIGRATION_3_4` shipped; explicit lazy prefs→DB seed documented.*
+*Changes from v1.0 → v1.1: password verification is canary-based rather than SHA-256 hash comparison; Room compiler runs via KSP not kapt; Gson dropped (unused); Settings gains a CVV Re-Auth Mode toggle; Reset flow uses two chained confirmations; file structure updated to match `com.cardvault` package layout.*

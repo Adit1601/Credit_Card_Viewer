@@ -98,8 +98,10 @@ class CardViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun CardDisplay.matches(q: String): Boolean {
         if (nickname.contains(q, ignoreCase = true)) return true
-        val last4 = maskedNumber.takeLast(4)
-        return last4.all(Char::isDigit) && last4.contains(q)
+        // See CardFormatting.visibleDigitsOf: taking the last 4 *characters* here silently broke
+        // last-4 search for every PAN whose length is not a multiple of 4 (Amex and friends).
+        val last4 = CardFormatting.visibleDigitsOf(maskedNumber)
+        return last4.isNotEmpty() && last4.contains(q)
     }
 
     private fun CardDisplay.matchesBank(filter: String): Boolean =

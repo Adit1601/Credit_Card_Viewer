@@ -401,6 +401,14 @@ Before writing anything real, confirm the engine choice survives contact.
 #### Phase 0 results (measured 2026-08-28)
 
 Versions as planned: `camerax = "1.3.4"`, `mlkitText = "16.0.1"`, five `implementation` lines.
+
+> **Superseded 2026-08-29 — CameraX is now 1.4.2.** The Phase 0 note above says "NOT 1.4.x — that
+> line wants compileSdk 35"; that was wrong. Every CameraX 1.4.2 artifact this project uses declares
+> `minCompileSdk = 34`, so the move needed no SDK bump. It was made for 16 KB page-size support:
+> `camera-core` 1.3.4's `libimage_processing_util_jni.so` has 4 KB-aligned LOAD segments, which is
+> what raised `PageSizeMismatchDialog` at launch on Android 15+ images (REQUIREMENTS.md BUG-F20).
+> The measurements below were taken on 1.3.4 and are left as the record of that build; the release
+> APK on 1.4.2 is 14.6 MB on arm64 (from 14.5 MB) and R8 still needs no keep rules.
 Verified on the **release** build (`isMinifyEnabled = true`, `isShrinkResources = true`).
 
 **a. R8 / release build — PASS, and no keep rules were needed.**

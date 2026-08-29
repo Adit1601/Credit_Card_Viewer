@@ -103,6 +103,7 @@
     <string name="detail_reveal_number">Show number</string>
     <string name="detail_hide_number">Hide number</string>
     <string name="detail_show_cvv">Show CVV</string>
+    <string name="detail_hide_cvv">Hide CVV</string>
     <string name="detail_cvv_hidden">•••</string>
     <string name="detail_copy">Copy</string>
     <string name="detail_copy_number">Copy card number</string>
@@ -124,7 +125,7 @@
     <string name="settings_reset_app">Reset app (wipe all data)</string>
     <string name="settings_reset_app_confirm_title">Reset app?</string>
     <string name="settings_reset_app_confirm_body">All cards and settings will be permanently deleted. This cannot be undone.</string>
-    <string name="settings_reset_app_final_body">Are you absolutely sure? Type your password to confirm on the next step.</string>
+    <string name="settings_reset_app_final_body">Are you absolutely sure? Every card is deleted the moment you confirm. This is the last step — there is no password check after this, and nothing can be recovered.</string>
     <string name="settings_version">Version</string>
     <string name="hint_current_password">Current password</string>
     <string name="hint_new_password">New password</string>
